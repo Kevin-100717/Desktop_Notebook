@@ -1,0 +1,59 @@
+{
+  "name": "desktop-notebook",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron": "nodemon --exec electron . --watch ./ --ext .js",
+    "electron:dev": "npm-run-all --parallel dev electron",
+    "electron:build": "vite build && electron-builder"
+  },
+  "dependencies": {
+    "mitt": "^3.0.1",
+    "nodemon": "^3.1.14",
+    "npm-run-all": "^4.1.5",
+    "vue": "^3.5.42",
+    "vue-router": "^5.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "electron": "41.0.3",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.3.0"
+  },
+  "build": {
+    "productName": "desktop-notebook",
+    "appId": "desktop-notebook",
+    "asar": true,
+    "directories": {
+      "output": "dist_electron/${version}"
+    },
+    "files": [
+      "dist",
+      "electron"
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "category": "your.app.category.type"
+    },
+    "win": {
+      "icon": "./electron/log.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "ia32"
+          ]
+        }
+      ]
+    },
+    "linux": {}
+  }
+}
