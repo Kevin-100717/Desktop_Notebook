@@ -7,7 +7,9 @@ import emitter from './utils/emitter.js';
 <template>
   <SideBar></SideBar>
   <div id="content">
-    <router-view></router-view>
+    <keep-alive>
+      <router-view></router-view>
+    </keep-alive>
   </div>
 </template>
 

@@ -26,3 +26,5 @@ dist-ssr
 local
 dist_electron
 .vscode
+config.json
+notes

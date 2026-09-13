@@ -48,7 +48,7 @@ export default {
     width: 50px;
     height: 50px;
     overflow: hidden;
-    -moz-user-select: none;
+    user-select: none;
     cursor: pointer;
 }
 .menu-item .icon{
