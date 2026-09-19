@@ -7,9 +7,11 @@ import emitter from './utils/emitter.js';
 <template>
   <SideBar></SideBar>
   <div id="content">
-    <keep-alive>
-      <router-view></router-view>
-    </keep-alive>
+    <router-view v-slot="{ Component }">
+      <keep-alive>
+        <component :is="Component" />
+      </keep-alive>
+    </router-view>
   </div>
 </template>
 

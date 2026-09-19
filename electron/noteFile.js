@@ -28,15 +28,21 @@ function writeList(){
     }
     fs.writeFileSync("./notes/list.json",JSON.stringify(note_list))
 }
-function createNewNote(){
+function createNewNote(tit="笔记样例"){
     var t = new Date().getTime()
     var fp = "./notes/"+ t
     fs.mkdirSync(fp)
-    var f = fp+"/note"+t+"-"+Math.round(Math.random()*100000)+".md"
-    fs.writeFileSync(f,"# New Note "+new Date().toTimeString())
+    var f = fp+"/note"+t+"-"+Math.round(Math.random()*100000)
+    fs.writeFileSync(f+".md","# New Note "+new Date().toLocaleString())
+    const det = {
+        title:tit,
+        createAt:new Date().toLocaleString()
+    }
+    fs.writeFileSync(f+".json",JSON.stringify(det))
     updateFileList({
         time:t,
-        file:f
+        file:f,
+        det:det
     })
 }
 function getNotes(){
@@ -49,7 +55,10 @@ function readNote(t){
     if(note_list == null){
         throw new Error("list is not inited")
     }
-    return fs.readFileSync(note_list.notes.filter(item=>item.time == t)[0].file, { encoding: 'utf-8' })
+    return fs.readFileSync(
+        note_list.notes.filter(item=>item.time == t)[0].file+".md", 
+        { encoding: 'utf-8' }
+    )
 }
 module.exports = {
     note_init:note_init,
