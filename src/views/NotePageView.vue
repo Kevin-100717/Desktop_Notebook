@@ -83,23 +83,6 @@ export default {
     border-bottom: 1px solid #494949;
 }
 
-#tab-bar::-webkit-scrollbar {
-    height: 6px;
-}
-
-#tab-bar::-webkit-scrollbar-track {
-    background: #16171d;
-}
-
-#tab-bar::-webkit-scrollbar-thumb {
-    background: #3a3b3e;
-    border-radius: 3px;
-}
-
-#tab-bar::-webkit-scrollbar-thumb:hover {
-    background: #4a4b4e;
-}
-
 .tab-item {
     display: flex;
     align-items: center;

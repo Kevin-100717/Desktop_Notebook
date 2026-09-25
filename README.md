@@ -1,5 +1,7 @@
 # Desktop NoteBook
 
+> 此项目暂未完成
+
 基于electron+vite的云笔记+便签应用
 项目暂未完成，预期功能
 

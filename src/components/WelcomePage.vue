@@ -55,7 +55,7 @@ import plusIcon from "@/assets/Plus.svg"
 <script>
 import axios from 'axios';
 import emitter from "../utils/emitter";
-import NoteEditPage from "../views/NoteEditPage.vue";
+import NoteEditPage from "./NoteEditPage.vue";
 
 const START_TS = 1789305603090;
 const LEVELS = ['#161b22', '#0e4429', '#006d32', '#26a641', '#39d353'];
@@ -186,6 +186,9 @@ export default {
 </script>
 
 <style scoped>
+*{
+    color: white;
+}
 #title {
     font-size: 30px;
     text-align: center;
