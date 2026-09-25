@@ -6,23 +6,35 @@
                 :key="tab.id"
                 class="tab-item"
                 :class="{ active: activeTab === i }"
-                @click="activeTab = i"
+                @click="selectTab(i)"
             >
                 <span class="tab-title">{{ tab.title }}</span>
                 <span v-if="tab.closable" class="tab-close" @click.stop="closeTab(i)">×</span>
             </div>
         </div>
         <div id="tab-content">
-            <component
-                :is="tabs[activeTab].component"
-                v-bind="tabs[activeTab].props"
-            />
+            <div
+                v-for="(tab, i) in tabs"
+                v-show="activeTab === i"
+                :key="tab.id"
+                class="tab-page"
+            >
+                <keep-alive>
+                    <component
+                        :is="tab.component"
+                        :key="tab.id"
+                        :ref="el => setTabRef(el, tab.id)"
+                        v-bind="tab.props"
+                    />
+                </keep-alive>
+            </div>
         </div>
     </div>
 </template>
 
 <script>
 import { markRaw } from 'vue';
+import { ElMessageBox } from 'element-plus';
 import emitter from '../utils/emitter';
 import WelcomePage from '../components/WelcomePage.vue';
 
@@ -36,25 +48,63 @@ export default {
     data() {
         return {
             tabs: [createWelcomeTab()],
-            activeTab: 0
+            activeTab: 0,
+            tabRefs: markRaw(new Map())
         }
     },
     methods: {
+        setTabRef(component,id) {
+            if(component) this.tabRefs.set(id,component)
+            else this.tabRefs.delete(id)
+        },
+        getTabComponent(id) {
+            return this.tabRefs.get(id)
+        },
         addTab({ title = 'New Tab', component = null, props = {}, closable = true } = {}) {
+            const tid = props.noteData?.time
+            const current = this.tabs.findIndex(tab=>tab.props.noteData?.time == tid)
+            if(tid != null && current !== -1){
+                this.activeTab = current
+                return
+            }
             this.tabs.push({
                 id: tabId++,
                 title,
-                component,
+                component: markRaw(component),
                 props,
                 closable
             });
             this.activeTab = this.tabs.length - 1;
         },
-        closeTab(i) {
-            this.tabs.splice(i, 1);
-            if (this.activeTab >= this.tabs.length) {
-                this.activeTab = Math.max(0, this.tabs.length - 1);
+        selectTab(i){
+            this.activeTab = i
+            this.getTabComponent(this.tabs[i]?.id)?.refreshFromDisk?.()
+        },
+        async closeTab(i) {
+            const tab = this.tabs[i]
+            if(!tab?.closable) return
+            const component = this.getTabComponent(tab.id)
+            if(component?.isDirty){
+                try{
+                    await ElMessageBox.confirm("当前笔记有未保存修改。", "关闭笔记", {
+                        confirmButtonText:"保存并关闭",
+                        cancelButtonText:"放弃修改",
+                        distinguishCancelAndClose:true,
+                        type:"warning"
+                    })
+                    if(!(await component.save())) return
+                }catch(action){
+                    if(action !== "cancel") return
+                }
             }
+            if(this.tabs[i]?.id !== tab.id) return
+            this.removeTab(i)
+        },
+        removeTab(i) {
+            const activeId = this.tabs[this.activeTab]?.id
+            this.tabs.splice(i, 1)
+            const activeIndex = this.tabs.findIndex(tab=>tab.id == activeId)
+            this.activeTab = activeIndex == -1 ? Math.min(i,this.tabs.length-1) : activeIndex
         }
     },
     mounted() {
@@ -137,6 +187,10 @@ export default {
 #tab-content {
     flex: 1;
     overflow: auto;
+}
+
+.tab-page {
+    height: 100%;
 }
 
 #tab-content::-webkit-scrollbar {

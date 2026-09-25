@@ -40,10 +40,10 @@ import plusIcon from "@/assets/Plus.svg"
         </div>
         <div id="note-list">
             <h2>所有笔记</h2><br>
-            <div v-for="date_block in notesData">
+            <div v-for="date_block in notesData" :key="date_block.dat">
                 <h4>{{ date_block.dat }}</h4>
                 <div class="devide-line"></div>
-                <div class="note-box" v-for="note in date_block.notes" @click="onNoteClicked(note)">
+                <div class="note-box" v-for="note in date_block.notes" :key="note.time" @click="onNoteClicked(note)">
                     <p class="note-title">{{ note.det.title }}</p>
                     <span class="note-time">{{ note.det.createAt }}</span>
                 </div>
@@ -93,7 +93,9 @@ export default {
             monthLabels: [],
             weeks: WEEKS,
             cellSize: 10,
-            notesData:[]
+            notesData:[],
+            unsubscribe:null,
+            listRequestId:0
         }
     },
     methods: {
@@ -131,7 +133,7 @@ export default {
                 d.setDate(d.getDate() + i);
                 const ts = d.getTime();
                 const inRange = ts >= START_TS;
-                var info = this.notesData.filter(item=>item.dat == d.toLocaleDateString())[0]
+                var info = this.notesData.find(item=>item.dat == fmtDate(d))
                 const level = inRange ? getLevel(info?info.notes.length:0) : 0;
                 cells.push({
                     color: LEVELS[level],
@@ -148,39 +150,49 @@ export default {
             this.monthLabels = [...monthSet.values()];
         },
         async getNoteList(){
-            this.notesData = []
-            const notesList = await window.electron.getNoteList()
-            console.log(notesList)
-            notesList.notes.forEach(item=>{
-                var time = new Date()
-                time.setTime(item.time)
-                var date = time.toLocaleDateString()
-                if(this.notesData.filter(element=>element.dat == date).length > 0){
-                    this.notesData[
-                        this.notesData.indexOf(this.notesData.filter(element=>element.dat == date))
-                    ].notes.push(item)
-                }else{
-                    this.notesData.push({
-                        dat:date,
-                        notes:[item]
-                    })
-                }
-            })
-            console.log(this.notesData)
+            const request = ++this.listRequestId
+            try{
+                const notesList = await window.electron.getNoteList()
+                if(request !== this.listRequestId) return false
+                const groups = new Map()
+                const notes = [...notesList.notes]
+                    .filter(item=>item?.det && item.time != null)
+                    .sort((a,b)=>Number(b.time)-Number(a.time))
+                notes.forEach(item=>{
+                    const date = fmtDate(new Date(item.time))
+                    if(!groups.has(date)) groups.set(date,[])
+                    groups.get(date).push(item)
+                })
+                this.notesData = [...groups.entries()]
+                    .sort((a,b)=>b[0].localeCompare(a[0]))
+                    .map(([dat,notes])=>({dat,notes}))
+                return true
+            }catch{
+                if(request === this.listRequestId) this.notesData = []
+                return request === this.listRequestId
+            }
+        },
+        async refreshView(){
+            if(await this.getNoteList()) this.buildCalendar()
         },
         onNoteClicked(note){
-            console.log(note)
             emitter.emit('add-tab',{ title:note.det.title, component:NoteEditPage, props:{
                 noteData:note
             }, closable:true })
         }
     },
-    async mounted() {
-        // ghKey = await window.electron.getUserInfo()
-        // this.getUserInfo()
+    mounted() {
         this.calcSize()
-        await this.getNoteList()
-        this.buildCalendar()
+        this.unsubscribe = window.electron.onNoteUpdated(note=>{
+            if(note.list) this.refreshView()
+        })
+        this.refreshView()
+    },
+    activated(){
+        this.refreshView()
+    },
+    beforeUnmount(){
+        if(this.unsubscribe) this.unsubscribe()
     }
 }
 </script>

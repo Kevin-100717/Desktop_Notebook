@@ -27,10 +27,24 @@ export default {
         }
     },
     methods:{
+        syncRoute(path){
+            const ind = this.routes.indexOf(path)
+            if(ind !== -1){
+                this.curr = ind
+                this.sliderTop = ind * 58
+            }
+        },
         pushRouter(ind){
-            this.curr = ind;
-            this.sliderTop = ind * 58
+            this.syncRoute(this.routes[ind])
             emitter.emit("push-router",this.routes[ind])
+        }
+    },
+    watch:{
+        "$route.path":{
+            immediate:true,
+            handler(path){
+                this.syncRoute(path)
+            }
         }
     }
 }

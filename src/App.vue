@@ -24,6 +24,9 @@ export default {
   },
   mounted(){
     emitter.on("push-router",this.goRouter)
+  },
+  beforeUnmount(){
+    emitter.off("push-router",this.goRouter)
   }
 }
 </script>

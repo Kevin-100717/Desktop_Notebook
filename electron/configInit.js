@@ -1,15 +1,25 @@
-const { existsSync,readFileSync,writeFileSync } = require("fs")
+const { existsSync,readFileSync,writeFileSync,copyFileSync,renameSync,unlinkSync,mkdirSync } = require("fs")
+const path = require("path")
 
-var config = {
+let config = {
     "userKey":"",
     "createTime":0,
 }
-function conf_init(){
-    if(!existsSync("./config.json")){
+let configPath = ""
+
+function conf_init(dataDir=process.cwd()){
+    const root = path.resolve(dataDir)
+    mkdirSync(root,{recursive:true})
+    configPath = path.join(root,"config.json")
+    const legacyPath = path.resolve(process.cwd(),"config.json")
+    if(!existsSync(configPath) && legacyPath !== configPath && existsSync(legacyPath)){
+        copyFileSync(legacyPath,configPath)
+    }
+    if(!existsSync(configPath)){
         config.createTime = new Date().getTime()
         writeConfig(config)
     }
-    config = JSON.parse(readFileSync("./config.json"))
+    config = JSON.parse(readFileSync(configPath,"utf-8"))
 }
 function setConfig(key,value){
     if(config == null){
@@ -25,7 +35,14 @@ function getConfig(key){
     return config[key]
 }
 function writeConfig(conf){
-    writeFileSync("./config.json",JSON.stringify(conf))
+    const tempPath = configPath+".tmp-"+process.pid+"-"+Date.now()
+    try{
+        writeFileSync(tempPath,JSON.stringify(conf),"utf-8")
+        renameSync(tempPath,configPath)
+    }catch(error){
+        try{unlinkSync(tempPath)}catch{}
+        throw error
+    }
 }
 
 module.exports = {

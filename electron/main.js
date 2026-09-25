@@ -1,5 +1,4 @@
-
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, dialog } = require('electron')
 const path = require('path')
 const { conf_init } = require("./configInit")
 const { bindIpc } = require("./ipcHandler")
@@ -11,30 +10,42 @@ const createWindow = () => {
         height: 600,
         show:false,
         webPreferences: {
-            webSecurity: false,
+            contextIsolation:true,
+            nodeIntegration:false,
             preload: path.join(__dirname, 'preload.js')
         }
     })
-    
-    bindIpc(win)
 
-    const env = app.isPackaged ? 'production' : 'development'
-    const indexHtml = {
-        development: 'http://localhost:5173', // 开发环境
-        production: path.join(__dirname, '../dist/index.html') // 生产环境
-    }
+    bindIpc(win)
     win.setMenuBarVisibility(false)
-    win.loadURL(indexHtml[env])
-    win.on("ready-to-show",()=>{
-        win.show()
+    if(app.isPackaged){
+        win.loadFile(path.join(__dirname,'../dist/index.html'))
+    }else{
+        win.loadURL('http://localhost:5173')
+    }
+    win.on('ready-to-show',()=>win.show())
+    let retry = 0
+    win.webContents.on('did-fail-load',(_event,errorCode)=>{
+        if(errorCode === -3) return
+        if(!app.isPackaged && retry < 10){
+            retry++
+            setTimeout(()=>win.loadURL('http://localhost:5173'),300)
+        }else{
+            win.show()
+        }
     })
-    // win.loadFile('index.html')
- 
 }
+
 app.whenReady().then(async () => {
-    conf_init()
-    note_init()
-    createWindow()
+    try{
+        const dataDir = app.isPackaged ? path.dirname(process.execPath) : app.getAppPath()
+        conf_init(dataDir)
+        note_init(dataDir)
+        createWindow()
+    }catch(error){
+        dialog.showErrorBox("启动失败",error.message)
+        app.quit()
+    }
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
