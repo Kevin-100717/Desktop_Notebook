@@ -1,7 +1,7 @@
 <template>
     <div id="sidebar">
         <div id="slider" :style="{ top: sliderTop + 'px' }"></div>
-        <div :class="{'menu-item':true,'active':this.curr == i}" v-for="(item, i) in menuList" :key="i" @click="pushRouter(i)">
+        <div :class="{'menu-item':true,'active':this.curr == i}" v-for="(item, i) in menuList" :key="i" :title="item.name" @click="pushRouter(i)">
             <div class="icon" :style="{ maskImage: item.icon }"></div>
             <p>{{ item.name }}</p>
         </div>
@@ -52,54 +52,68 @@ export default {
 
 <style scoped>
 #sidebar{
+    position: relative;
     width: 60px;
     height: 100%;
-    border-right: 1px solid #494949;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: var(--surface-1);
+    border-right: 1px solid var(--border-1);
 }
 .menu-item{
-    margin-left: 3px;
-    margin-bottom: 8px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
     width: 50px;
     height: 50px;
+    margin-bottom: 8px;
+    border-radius: var(--radius-1);
     overflow: hidden;
     user-select: none;
     cursor: pointer;
+    transition: background 0.15s var(--ease);
 }
 .menu-item .icon{
-    width: 25px;
-    height: 25px;
-    margin-left: 15px;
-    margin-top: 7px;
+    width: 23px;
+    height: 23px;
     background-color: var(--unhighlight);
-    transition: all 0.1s ease-in-out;
+    transition: background-color 0.15s var(--ease);
 }
 .menu-item:hover .icon,.menu-item.active .icon{
-    background-color: white;
+    background-color: var(--text-1);
 }
 .menu-item p{
     color: var(--unhighlight);
     font-family: var(--font-en);
     text-align: center;
-    width: 50px;
-    font-size: 10px;
-    margin-left: 3px;
-    transition: all 0.1s ease-in-out;
+    font-size: 11px;
+    letter-spacing: 0.3px;
+    transition: color 0.15s var(--ease);
 }
 .menu-item:hover p,.menu-item.active p{
-    color: white;
+    color: var(--text-1);
 }
 #slider{
     position: absolute;
+    left: 0;
+    top: 0;
     width: 60px;
     height: 50px;
-    transition: top 0.3s ease-in-out;
-    background-color: #e8d63136;
+    pointer-events: none;
+    background: var(--accent-soft);
+    transition: top 0.28s var(--ease);
 }
 #slider::before{
     position: absolute;
     content: " ";
+    left: 0;
+    top: 0;
     width: 3px;
     height: 50px;
-    background-color: var(--highlight-1);
+    background-color: var(--accent-strong);
 }
 </style>

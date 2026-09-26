@@ -36,18 +36,18 @@
 import { markRaw } from 'vue';
 import { ElMessageBox } from 'element-plus';
 import emitter from '../utils/emitter';
-import WelcomePage from '../components/WelcomePage.vue';
+import NoteListPage from '../components/NoteListPage.vue';
 
 let tabId = 0;
 
-function createWelcomeTab() {
-    return { id: tabId++, title: 'Welcome', component: markRaw(WelcomePage), props: {}, closable: false };
+function createNoteListTab() {
+    return { id: tabId++, title: '笔记列表', component: markRaw(NoteListPage), props: {}, closable: false };
 }
 
 export default {
     data() {
         return {
-            tabs: [createWelcomeTab()],
+            tabs: [createNoteListTab()],
             activeTab: 0,
             tabRefs: markRaw(new Map())
         }
@@ -105,13 +105,33 @@ export default {
             this.tabs.splice(i, 1)
             const activeIndex = this.tabs.findIndex(tab=>tab.id == activeId)
             this.activeTab = activeIndex == -1 ? Math.min(i,this.tabs.length-1) : activeIndex
+        },
+        closeNoteTabs(tid) {
+            let index = this.tabs.findIndex(tab=>tab.props.noteData != null && String(tab.props.noteData.time) === String(tid))
+            while(index !== -1){
+                this.removeTab(index)
+                index = this.tabs.findIndex(tab=>tab.props.noteData != null && String(tab.props.noteData.time) === String(tid))
+            }
+        },
+        onTrayAction(action) {
+            if(action !== 'new-note' && action !== 'new-sticky') return
+            const listIndex = this.tabs.findIndex(tab=>tab.component === NoteListPage)
+            if(listIndex === -1) return
+            this.activeTab = listIndex
+            this.$nextTick(()=>{
+                emitter.emit(action === 'new-note' ? 'request-create-note' : 'request-create-sticky')
+            })
         }
     },
     mounted() {
         emitter.on('add-tab', this.addTab);
+        emitter.on('note-deleted', this.closeNoteTabs);
+        this.offTray = window.electron.onTrayAction(this.onTrayAction)
     },
     beforeUnmount() {
         emitter.off('add-tab', this.addTab);
+        emitter.off('note-deleted', this.closeNoteTabs);
+        if(this.offTray) this.offTray()
     }
 }
 </script>
@@ -127,40 +147,52 @@ export default {
 #tab-bar {
     display: flex;
     flex-shrink: 0;
+    gap: 4px;
+    padding: 6px 6px 0;
     overflow-x: auto;
     overflow-y: hidden;
-    background: #1a1b1e;
-    border-bottom: 1px solid #494949;
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border-1);
 }
 
 .tab-item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
     flex-shrink: 0;
-    padding: 0 12px;
+    padding: 0 14px;
     height: 36px;
-    font-size: 13px;
-    color: #9ca3af;
+    font-size: 14px;
+    color: var(--text-2);
     cursor: pointer;
-    border-right: 1px solid #494949;
+    border-radius: var(--radius-1) var(--radius-1) 0 0;
     user-select: none;
     transition: background 0.15s, color 0.15s;
 }
 
 .tab-item:hover {
-    background: #2e303a;
-    color: #f3f4f6;
+    background: var(--block-2);
+    color: var(--text-1);
 }
 
 .tab-item.active {
-    background: #16171d;
-    color: #f3f4f6;
-    border-bottom: 2px solid var(--highlight-1, #c084fc);
+    background: var(--bg-1);
+    color: var(--text-1);
+}
+
+.tab-item.active::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: var(--accent-strong);
 }
 
 .tab-title {
-    max-width: 120px;
+    max-width: 150px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -170,27 +202,38 @@ export default {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
-    border-radius: 3px;
-    font-size: 15px;
+    width: 19px;
+    height: 19px;
+    border-radius: 50%;
+    font-size: 16px;
     line-height: 1;
-    color: #9ca3af;
+    color: var(--text-2);
     transition: background 0.15s, color 0.15s;
 }
 
 .tab-close:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: #f3f4f6;
+    background: var(--danger-soft);
+    color: var(--danger);
 }
 
 #tab-content {
     flex: 1;
     overflow: auto;
+    background: var(--bg-1);
 }
 
 .tab-page {
     height: 100%;
+    animation: tab-fade-in 0.18s var(--ease, ease);
+}
+
+@keyframes tab-fade-in {
+    from {
+        opacity: 0.55;
+    }
+    to {
+        opacity: 1;
+    }
 }
 
 #tab-content::-webkit-scrollbar {
@@ -199,19 +242,19 @@ export default {
 }
 
 #tab-content::-webkit-scrollbar-track {
-    background: #16171d;
+    background: var(--scroll-track);
 }
 
 #tab-content::-webkit-scrollbar-thumb {
-    background: #3a3b3e;
+    background: var(--scroll-thumb);
     border-radius: 3px;
 }
 
 #tab-content::-webkit-scrollbar-thumb:hover {
-    background: #4a4b4e;
+    background: var(--scroll-thumb-hover);
 }
 
 #tab-content::-webkit-scrollbar-corner {
-    background: #16171d;
+    background: var(--scroll-track);
 }
 </style>

@@ -4,11 +4,15 @@ const path = require("path")
 let config = {
     "userKey":"",
     "createTime":0,
+    "theme":"dark",
+    "closeToTray":true,
 }
 let configPath = ""
+let rootDir = ""
 
 function conf_init(dataDir=process.cwd()){
     const root = path.resolve(dataDir)
+    rootDir = root
     mkdirSync(root,{recursive:true})
     configPath = path.join(root,"config.json")
     const legacyPath = path.resolve(process.cwd(),"config.json")
@@ -17,9 +21,18 @@ function conf_init(dataDir=process.cwd()){
     }
     if(!existsSync(configPath)){
         config.createTime = new Date().getTime()
+        config.closeToTray = true
         writeConfig(config)
     }
     config = JSON.parse(readFileSync(configPath,"utf-8"))
+    if(config.theme !== "light" && config.theme !== "dark"){
+        config.theme = "dark"
+        writeConfig(config)
+    }
+    if(typeof config.closeToTray !== "boolean"){
+        config.closeToTray = true
+        writeConfig(config)
+    }
 }
 function setConfig(key,value){
     if(config == null){
@@ -33,6 +46,12 @@ function getConfig(key){
         throw new Error("config not init")
     }
     return config[key]
+}
+function getRootDir(){
+    if(!rootDir){
+        throw new Error("config not init")
+    }
+    return rootDir
 }
 function writeConfig(conf){
     const tempPath = configPath+".tmp-"+process.pid+"-"+Date.now()
@@ -48,5 +67,6 @@ function writeConfig(conf){
 module.exports = {
     conf_init:conf_init,
     setConfig:setConfig,
-    getConfig:getConfig
+    getConfig:getConfig,
+    getRootDir:getRootDir
 }

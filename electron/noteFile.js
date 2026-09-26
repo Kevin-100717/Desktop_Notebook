@@ -420,16 +420,25 @@ function note_init(root=process.cwd()){
     if(!fs.existsSync(notesDir)){
         fs.mkdirSync(notesDir,{recursive:true})
     }
+    let created=false
     if(!fs.existsSync(listPath)){
         fs.writeFileSync(listPath,"{\"notes\":[]}")
+        created=true
     }
     note_list = readNoteList()
-    if(note_list.notes.length === 0) createNewNote(true)
+    if(created) createNewNote(true)
 }
 function readNoteList(){
     const data = JSON.parse(fs.readFileSync(listPath,"utf-8"))
     if(!data || !Array.isArray(data.notes)) throw new Error("invalid notes list")
     data.notes = data.notes.filter(item=>item && item.time != null && typeof item.file === "string" && item.file.length > 0)
+    if(!Array.isArray(data.tags)) data.tags = []
+    data.tags = data.tags.filter(item=>typeof item === "string" && item.trim().length > 0)
+    data.notes.forEach(note=>{
+        note.tags = Array.isArray(note.tags)
+            ? note.tags.filter(item=>typeof item === "string" && item.trim().length > 0)
+            : []
+    })
     return data
 }
 function writeAtomic(file,content){
@@ -450,31 +459,119 @@ function updateFileList(data){
     writeList()
 
 }
+function collectTags(){
+    const seen = new Set()
+    const tags = []
+    note_list.notes.forEach(note=>{
+        if(!Array.isArray(note.tags)) return
+        note.tags.forEach(tag=>{
+            const key = tag.trim().toLowerCase()
+            if(!key || seen.has(key)) return
+            seen.add(key)
+            tags.push(tag.trim())
+        })
+    })
+    return tags
+}
 function writeList(){
     if(note_list == null){
         throw new Error("list is not inited")
     }
+    note_list.tags = collectTags()
     writeAtomic(listPath,JSON.stringify(note_list))
 }
+function normalizeTitle(tit){
+    if(typeof tit !== "string") throw new Error("invalid note title")
+    const title = tit.trim()
+    if(!title) throw new Error("empty note title")
+    return title
+}
 function createNewNote(first=false,tit="笔记样例"){
+    const title = normalizeTitle(tit)
+    note_list = readNoteList()
     var t = new Date().getTime()
+    while(note_list.notes.some(item=>String(item.time)===String(t))) t++
     const fp = path.join(notesDir,String(t))
     fs.mkdirSync(fp,{recursive:true})
     const f = path.join(fp,"note"+t+"-"+Math.round(Math.random()*100000))
     writeAtomic(f+".md",first?
         first_new_template:
-        "# New Note "+new Date().toLocaleString()
+        "# "+title+"\n"
     )
     const det = {
-        title:tit,
+        title:title,
         createAt:new Date().toLocaleString()
     }
     writeAtomic(f+".json",JSON.stringify(det))
-    updateFileList({
+    const entry = {
         time:t,
         file:path.relative(dataDir,f),
-        det:det
+        det:det,
+        tags:[]
+    }
+    updateFileList(entry)
+    return entry
+}
+function createNote(title){
+    return createNewNote(false,title)
+}
+function deleteNote(t){
+    note_list = readNoteList()
+    const index = note_list.notes.findIndex(item=>String(item.time)===String(t))
+    if(index === -1) throw new Error("note is not found")
+    const note = note_list.notes[index]
+    const files = [getNoteFile(note,".md"),getNoteFile(note,".json")]
+    files.forEach(file=>{
+        clearTimeout(watchTimers.get(file))
+        watchTimers.delete(file)
+        fs.unwatchFile(file)
+        watchedFiles.delete(file)
     })
+    note_list.notes.splice(index,1)
+    writeList()
+    const noteDir = path.dirname(files[0])
+    files.forEach(file=>{
+        try{fs.unlinkSync(file)}catch{}
+    })
+    try{fs.rmdirSync(noteDir)}catch{}
+    return "success"
+}
+function normalizeTags(tags){
+    if(!Array.isArray(tags)) throw new Error("invalid tags")
+    const result = []
+    const seen = new Set()
+    tags.forEach(item=>{
+        if(typeof item !== "string") throw new Error("invalid tag")
+        const tag = item.trim()
+        if(!tag) return
+        if(tag.length > 24) throw new Error("tag is too long")
+        const key = tag.toLowerCase()
+        if(seen.has(key)) return
+        seen.add(key)
+        result.push(tag)
+    })
+    if(result.length === 0) throw new Error("tag is empty")
+    if(result.length > 3) throw new Error("too many tags")
+    return result
+}
+function getTags(){
+    if(note_list == null){
+        throw new Error("list is not inited")
+    }
+    note_list = readNoteList()
+    return note_list.tags
+}
+function setNoteTags(tid,tags){
+    if(note_list == null){
+        throw new Error("list is not inited")
+    }
+    note_list = readNoteList()
+    const index = note_list.notes.findIndex(item=>String(item.time) === String(tid))
+    if(index === -1) throw new Error("note is not found")
+    const normalized = normalizeTags(tags)
+    note_list.notes[index].tags = normalized
+    writeList()
+    return { tags: normalized, allTags: note_list.tags }
 }
 function getNoteEntry(t){
     if(note_list == null){
@@ -588,5 +685,9 @@ module.exports = {
     getNotes:getNotes,
     readNote:readNote,
     saveNote:saveNote,
+    createNote:createNote,
+    deleteNote:deleteNote,
+    getTags:getTags,
+    setNoteTags:setNoteTags,
     watchNotes:watchNotes
 }

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -7,16 +7,82 @@
     <title>desktop-notebook</title>
     <style>
       :root{
+        color-scheme: dark;
         --icon-document:url(@/assets/Document.svg);
         --icon-setting:url(@/assets/Setting.svg);
+        --icon-plus:url(@/assets/Plus.svg);
         --bg-1:#161618;
-        --highlight-1:#e8d531;
+        --surface-1:#1a1b1f;
+        --surface-2:#212228;
+        --block-1:#1e1f24;
+        --block-2:#26272d;
+        --on-accent:#1a1b1e;
+        --on-danger:#ffffff;
+        --border-1:#2d2e34;
+        --border-2:#3c3d44;
+        --text-1:#f2f3f5;
+        --text-2:#a1a2a8;
         --unhighlight:rgb(194, 194, 194);
-        --font-en:'JetBrains Mono', 'Consolas', monospace
+        --highlight-1:#e8d531;
+        --accent-strong:#e8d531;
+        --font-en:'JetBrains Mono', 'Consolas', monospace;
+        --overlay-1:rgba(255, 255, 255, 0.03);
+        --overlay-2:rgba(255, 255, 255, 0.06);
+        --accent-soft:rgba(232, 213, 49, 0.12);
+        --accent-border:rgba(232, 213, 49, 0.45);
+        --danger:#ef4444;
+        --danger-soft:rgba(239, 68, 68, 0.18);
+        --scroll-track:#16171d;
+        --scroll-thumb:#3a3b3e;
+        --scroll-thumb-hover:#4a4b4e;
+        --sticky-soft:rgba(232, 213, 49, 0.16);
+        --sticky-soft-hover:rgba(232, 213, 49, 0.24);
+        --sticky-border:rgba(232, 213, 49, 0.42);
+        --sticky-strong:#e8d531;
+        --radius-1:8px;
+        --radius-2:12px;
+        --ease:cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      html[data-theme="light"]{
+        color-scheme: light;
+        --bg-1:#f3f4f6;
+        --surface-1:#ffffff;
+        --surface-2:#eceef1;
+        --block-1:#ffffff;
+        --block-2:#e9ecf1;
+        --on-accent:#ffffff;
+        --on-danger:#ffffff;
+        --border-1:#dfe1e6;
+        --border-2:#c6cad2;
+        --text-1:#1c1d21;
+        --text-2:#666b74;
+        --unhighlight:#8a909a;
+        --accent-strong:#9c8100;
+        --overlay-1:rgba(15, 20, 30, 0.03);
+        --overlay-2:rgba(15, 20, 30, 0.06);
+        --accent-soft:rgba(232, 213, 49, 0.26);
+        --accent-border:rgba(184, 152, 0, 0.55);
+        --danger:#dc2626;
+        --danger-soft:rgba(220, 38, 38, 0.12);
+        --scroll-track:#eceef1;
+        --scroll-thumb:#c3c7ce;
+        --scroll-thumb-hover:#a7acb5;
+        --sticky-soft:rgba(232, 213, 49, 0.30);
+        --sticky-soft-hover:rgba(232, 213, 49, 0.40);
+        --sticky-border:rgba(184, 152, 0, 0.5);
+        --sticky-strong:#b89800;
       }
       *{
         margin: 0;
         padding: 0;
+      }
+      button,input,textarea,select{
+        font-family: inherit;
+        color: inherit;
+      }
+      html{
+        -webkit-font-smoothing:antialiased;
+        text-rendering:optimizeLegibility;
       }
       #app,body,html{
         width: 100%;
@@ -24,22 +90,40 @@
         background-color: var(--bg-1);
         overflow: hidden;
       }
+      body{
+        color: var(--text-1);
+        font-size: 15px;
+        font-family:-apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      }
+      ::selection{
+        background: rgba(232, 213, 49, 0.28);
+        color: var(--text-1);
+      }
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      select:focus-visible,
+      [tabindex]:focus-visible{
+        outline: 2px solid var(--highlight-1);
+        outline-offset: 2px;
+      }
       *::-webkit-scrollbar {
         height: 6px;
         width: 6px;
       }
 
       *::-webkit-scrollbar-track {
-          background: #16171d;
+          background: var(--scroll-track);
       }
 
       *::-webkit-scrollbar-thumb {
-          background: #3a3b3e;
+          background: var(--scroll-thumb);
           border-radius: 3px;
       }
 
       *::-webkit-scrollbar-thumb:hover {
-          background: #4a4b4e;
+          background: var(--scroll-thumb-hover);
       }
     </style>
   </head>
