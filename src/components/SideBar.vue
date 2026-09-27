@@ -1,7 +1,7 @@
 <template>
     <div id="sidebar">
         <div id="slider" :style="{ top: sliderTop + 'px' }"></div>
-        <div :class="{'menu-item':true,'active':this.curr == i}" v-for="(item, i) in menuList" :key="i" :title="item.name" @click="pushRouter(i)">
+        <div :class="{'menu-item':true,'active':this.curr == i}" v-for="(item, i) in menuList" :key="i" :title="item.title || item.name" @click="pushRouter(i)">
             <div class="icon" :style="{ maskImage: item.icon }"></div>
             <p>{{ item.name }}</p>
         </div>
@@ -18,10 +18,14 @@ export default {
             sliderTop: 0,
             menuList:[
                 { name:"Notes", icon:"var(--icon-document)" },
+                { name:"知识网", icon:"var(--icon-graph)", title:"编辑我的知识网" },
+                { name:"Trash", icon:"var(--icon-trash)" },
                 { name:"Setting", icon:"var(--icon-setting)" }
             ],
             routes:[
                 "/",
+                "/graph",
+                "/trash",
                 "/settings"
             ]
         }

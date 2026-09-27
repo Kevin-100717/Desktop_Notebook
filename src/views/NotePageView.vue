@@ -1,6 +1,6 @@
 <template>
     <div id="note-page">
-        <div id="tab-bar">
+        <div id="tab-bar" v-show="!uiState.focus">
             <div
                 v-for="(tab, i) in tabs"
                 :key="tab.id"
@@ -36,6 +36,7 @@
 import { markRaw } from 'vue';
 import { ElMessageBox } from 'element-plus';
 import emitter from '../utils/emitter';
+import uiState from '../utils/uiState';
 import NoteListPage from '../components/NoteListPage.vue';
 
 let tabId = 0;
@@ -50,6 +51,11 @@ export default {
             tabs: [createNoteListTab()],
             activeTab: 0,
             tabRefs: markRaw(new Map())
+        }
+    },
+    computed: {
+        uiState() {
+            return uiState
         }
     },
     methods: {
@@ -113,6 +119,14 @@ export default {
                 index = this.tabs.findIndex(tab=>tab.props.noteData != null && String(tab.props.noteData.time) === String(tid))
             }
         },
+        renameNoteTab({tid,title}) {
+            this.tabs.forEach(tab=>{
+                if(tab.props?.noteData == null) return
+                if(String(tab.props.noteData.time) !== String(tid)) return
+                if(tab.props.noteData.det) tab.props.noteData.det.title = title
+                tab.title = title
+            })
+        },
         onTrayAction(action) {
             if(action !== 'new-note' && action !== 'new-sticky') return
             const listIndex = this.tabs.findIndex(tab=>tab.component === NoteListPage)
@@ -126,11 +140,13 @@ export default {
     mounted() {
         emitter.on('add-tab', this.addTab);
         emitter.on('note-deleted', this.closeNoteTabs);
+        emitter.on('note-renamed', this.renameNoteTab);
         this.offTray = window.electron.onTrayAction(this.onTrayAction)
     },
     beforeUnmount() {
         emitter.off('add-tab', this.addTab);
         emitter.off('note-deleted', this.closeNoteTabs);
+        emitter.off('note-renamed', this.renameNoteTab);
         if(this.offTray) this.offTray()
     }
 }

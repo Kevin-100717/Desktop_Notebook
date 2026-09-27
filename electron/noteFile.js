@@ -5,6 +5,7 @@ var dataDir = ""
 var notesDir = ""
 var legacyNotesDir = ""
 var listPath = ""
+var trashDir = ""
 var watchCallback = null
 const watchedFiles = new Map()
 const watchTimers = new Map()
@@ -413,6 +414,7 @@ function note_init(root=process.cwd()){
     notesDir = path.join(dataDir,"notes")
     legacyNotesDir = path.resolve(process.cwd(),"notes")
     listPath = path.join(notesDir,"list.json")
+    trashDir = path.join(notesDir,".trash")
     const legacyNotes = legacyNotesDir
     if(!fs.existsSync(notesDir) && legacyNotes !== notesDir && fs.existsSync(legacyNotes)){
         fs.cpSync(legacyNotes,notesDir,{recursive:true})
@@ -422,24 +424,61 @@ function note_init(root=process.cwd()){
     }
     let created=false
     if(!fs.existsSync(listPath)){
-        fs.writeFileSync(listPath,"{\"notes\":[]}")
+        fs.writeFileSync(listPath,"{\"notes\":[],\"trash\":[]}")
         created=true
     }
     note_list = readNoteList()
     if(created) createNewNote(true)
 }
 function readNoteList(){
-    const data = JSON.parse(fs.readFileSync(listPath,"utf-8"))
-    if(!data || !Array.isArray(data.notes)) throw new Error("invalid notes list")
+    let raw = null
+    try{
+        raw = fs.readFileSync(listPath,"utf-8")
+    }catch(error){
+        raw = null
+    }
+    let data = null
+    try{
+        data = raw != null ? JSON.parse(raw) : null
+    }catch(error){
+        data = null
+    }
+    if(data == null || typeof data !== "object" || !Array.isArray(data.notes)){
+        backupBrokenList()
+        data = { notes:[], trash:[], tags:[] }
+    }
     data.notes = data.notes.filter(item=>item && item.time != null && typeof item.file === "string" && item.file.length > 0)
-    if(!Array.isArray(data.tags)) data.tags = []
-    data.tags = data.tags.filter(item=>typeof item === "string" && item.trim().length > 0)
+    if(!Array.isArray(data.trash)) data.trash = []
+    data.trash = data.trash.filter(item=>item && item.time != null && typeof item.file === "string" && item.file.length > 0)
     data.notes.forEach(note=>{
         note.tags = Array.isArray(note.tags)
             ? note.tags.filter(item=>typeof item === "string" && item.trim().length > 0)
             : []
+        note.det = normalizeDet(note.det,"未命名笔记")
     })
+    data.trash.forEach(item=>{
+        item.tags = Array.isArray(item.tags)
+            ? item.tags.filter(tag=>typeof tag === "string" && tag.trim().length > 0)
+            : []
+        item.det = normalizeDet(item.det,"未命名笔记")
+        if(!Number.isFinite(item.deletedAt)) item.deletedAt = 0
+    })
+    data.tags = collectTagsFrom(data.notes)   // 老数据没有 tags 字段时按笔记重算，标签栏不会空掉
     return data
+}
+function normalizeDet(det,fallback){
+    const base = det != null && typeof det === "object" ? det : {}
+    if(typeof base.title !== "string" || base.title.length === 0) base.title = fallback
+    if(typeof base.createAt !== "string") base.createAt = ""
+    return base
+}
+function backupBrokenList(){
+    try{
+        if(!fs.existsSync(listPath)) return
+        const backup = listPath + ".broken-" + Date.now()
+        fs.copyFileSync(listPath,backup)
+        console.warn("[noteFile] notes/list.json 解析失败，已备份为 " + path.basename(backup) + " 并重建空列表")
+    }catch(error){}
 }
 function writeAtomic(file,content){
     const tempPath = file+".tmp-"+process.pid+"-"+Date.now()
@@ -460,15 +499,18 @@ function updateFileList(data){
 
 }
 function collectTags(){
+    return collectTagsFrom(note_list.notes)
+}
+function collectTagsFrom(notes){
     const seen = new Set()
     const tags = []
-    note_list.notes.forEach(note=>{
-        if(!Array.isArray(note.tags)) return
+    ;(Array.isArray(notes) ? notes : []).forEach(note=>{
+        if(!note || !Array.isArray(note.tags)) return
         note.tags.forEach(tag=>{
-            const key = tag.trim().toLowerCase()
+            const key = String(tag).trim().toLowerCase()
             if(!key || seen.has(key)) return
             seen.add(key)
-            tags.push(tag.trim())
+            tags.push(String(tag).trim())
         })
     })
     return tags
@@ -490,7 +532,8 @@ function createNewNote(first=false,tit="笔记样例"){
     const title = normalizeTitle(tit)
     note_list = readNoteList()
     var t = new Date().getTime()
-    while(note_list.notes.some(item=>String(item.time)===String(t))) t++
+    const timeTaken = time=>note_list.notes.some(item=>String(item.time)===String(time)) || note_list.trash.some(item=>String(item.time)===String(time))
+    while(timeTaken(t)) t++
     const fp = path.join(notesDir,String(t))
     fs.mkdirSync(fp,{recursive:true})
     const f = path.join(fp,"note"+t+"-"+Math.round(Math.random()*100000))
@@ -512,45 +555,180 @@ function createNewNote(first=false,tit="笔记样例"){
     updateFileList(entry)
     return entry
 }
-function createNote(title){
-    return createNewNote(false,title)
+function createNote(title,content){
+    const entry = createNewNote(false,title)
+    if(typeof content === "string" && content.length > 0){
+        saveNote({ tid:entry.time, content:content })
+    }
+    return entry
 }
-function deleteNote(t){
-    note_list = readNoteList()
-    const index = note_list.notes.findIndex(item=>String(item.time)===String(t))
-    if(index === -1) throw new Error("note is not found")
-    const note = note_list.notes[index]
-    const files = [getNoteFile(note,".md"),getNoteFile(note,".json")]
+function stopWatchFiles(files){
     files.forEach(file=>{
         clearTimeout(watchTimers.get(file))
         watchTimers.delete(file)
         fs.unwatchFile(file)
         watchedFiles.delete(file)
     })
+}
+function moveFile(from,to){
+    try{
+        fs.renameSync(from,to)
+    }catch(error){
+        if(error && error.code === "EXDEV"){
+            fs.copyFileSync(from,to)
+            fs.unlinkSync(from)
+            return
+        }
+        throw error
+    }
+}
+function moveToTrash(t){
+    note_list = readNoteList()
+    const index = note_list.notes.findIndex(item=>String(item.time)===String(t))
+    if(index === -1) throw new Error("note is not found")
+    const note = note_list.notes[index]
+    const mdFile = getNoteFile(note,".md")
+    const jsonFile = getNoteFile(note,".json")
+    const base = path.basename(mdFile,".md")
+    const targetDir = path.join(trashDir,String(note.time))
+    stopWatchFiles([mdFile,jsonFile])
+    fs.mkdirSync(targetDir,{recursive:true})
+    moveFile(mdFile,path.join(targetDir,base+".md"))
+    moveFile(jsonFile,path.join(targetDir,base+".json"))
+    try{fs.rmdirSync(path.dirname(mdFile))}catch{}
     note_list.notes.splice(index,1)
-    writeList()
-    const noteDir = path.dirname(files[0])
-    files.forEach(file=>{
-        try{fs.unlinkSync(file)}catch{}
+    note_list.trash.push({
+        time:note.time,
+        file:path.relative(dataDir,path.join(targetDir,base)),
+        det:note.det,
+        tags:Array.isArray(note.tags)?note.tags:[],
+        deletedAt:Date.now()
     })
-    try{fs.rmdirSync(noteDir)}catch{}
+    writeList()
     return "success"
 }
-function normalizeTags(tags){
-    if(!Array.isArray(tags)) throw new Error("invalid tags")
+function deleteNote(t){
+    return moveToTrash(t)
+}
+function getTrash(){
+    if(note_list == null){
+        throw new Error("list is not inited")
+    }
+    note_list = readNoteList()
+    note_list.trash = note_list.trash.filter(item=>{
+        try{
+            return fs.existsSync(getNoteFile(item,".md"))
+        }catch{
+            return false
+        }
+    })
+    return note_list.trash.slice().sort((a,b)=>b.deletedAt-a.deletedAt)
+}
+function getTrashEntry(t){
+    if(note_list == null){
+        throw new Error("list is not inited")
+    }
+    note_list = readNoteList()
+    const entry = note_list.trash.find(item=>String(item.time)===String(t))
+    if(!entry) throw new Error("trash item is not found")
+    return entry
+}
+function restoreNote(t){
+    note_list = readNoteList()
+    const index = note_list.trash.findIndex(item=>String(item.time)===String(t))
+    if(index === -1) throw new Error("trash item is not found")
+    const entry = note_list.trash[index]
+    const mdFile = getNoteFile(entry,".md")
+    const jsonFile = getNoteFile(entry,".json")
+    const base = path.basename(mdFile,".md")
+    const targetDir = path.join(notesDir,String(entry.time))
+    fs.mkdirSync(targetDir,{recursive:true})
+    moveFile(mdFile,path.join(targetDir,base+".md"))
+    moveFile(jsonFile,path.join(targetDir,base+".json"))
+    note_list.notes.push({
+        time:entry.time,
+        file:path.relative(dataDir,path.join(targetDir,base)),
+        det:entry.det,
+        tags:Array.isArray(entry.tags)?entry.tags:[]
+    })
+    note_list.trash.splice(index,1)
+    writeList()
+    syncWatchers()
+    return { time:entry.time, title:entry.det && entry.det.title }
+}
+function purgeNote(t){
+    note_list = readNoteList()
+    const index = note_list.trash.findIndex(item=>String(item.time)===String(t))
+    if(index === -1) throw new Error("trash item is not found")
+    const entry = note_list.trash[index]
+    let noteDir = ""
+    try{
+        const mdFile = getNoteFile(entry,".md")
+        stopWatchFiles([mdFile,getNoteFile(entry,".json")])
+        noteDir = path.dirname(mdFile)
+    }catch{}
+    note_list.trash.splice(index,1)
+    writeList()
+    if(noteDir){
+        try{fs.rmSync(noteDir,{recursive:true,force:true})}catch{}
+    }
+    return "success"
+}
+function emptyTrash(){
+    note_list = readNoteList()
+    const count = note_list.trash.length
+    note_list.trash = []
+    writeList()
+    try{fs.rmSync(trashDir,{recursive:true,force:true})}catch{}
+    return { removed:count }
+}
+function renameNote(data){
+    if(!data) throw new Error("invalid rename payload")
+    const title = normalizeTitle(data.title)
+    const entry = getNoteEntry(data.tid)
+    const detFile = getNoteFile(entry,".json")
+    let det = {}
+    try{
+        const parsed = JSON.parse(fs.readFileSync(detFile,{ encoding:'utf-8' }))
+        if(parsed && typeof parsed === "object") det = parsed
+    }catch{}
+    det.title = title
+    writeAtomic(detFile,JSON.stringify(det))
+    note_list = readNoteList()
+    const index = note_list.notes.findIndex(item=>String(item.time)===String(data.tid))
+    if(index !== -1){
+        note_list.notes[index].det = Object.assign({},note_list.notes[index].det,det)
+        writeList()
+    }
+    return { time:entry.time, title:title }
+}
+function dedupeTags(tags){
     const result = []
     const seen = new Set()
     tags.forEach(item=>{
-        if(typeof item !== "string") throw new Error("invalid tag")
-        const tag = item.trim()
+        const tag = String(item).trim()
         if(!tag) return
-        if(tag.length > 24) throw new Error("tag is too long")
         const key = tag.toLowerCase()
         if(seen.has(key)) return
         seen.add(key)
         result.push(tag)
     })
-    if(result.length === 0) throw new Error("tag is empty")
+    return result
+}
+function normalizeTagName(value){
+    if(typeof value !== "string") throw new Error("invalid tag")
+    const tag = value.trim()
+    if(!tag) throw new Error("tag is empty")
+    if(tag.length > 24) throw new Error("tag is too long")
+    return tag
+}
+function normalizeTags(tags){
+    if(!Array.isArray(tags)) throw new Error("invalid tags")
+    tags.forEach(item=>{
+        if(typeof item !== "string") throw new Error("invalid tag")
+        if(item.trim().length > 24) throw new Error("tag is too long")
+    })
+    const result = dedupeTags(tags)
     if(result.length > 3) throw new Error("too many tags")
     return result
 }
@@ -572,6 +750,47 @@ function setNoteTags(tid,tags){
     note_list.notes[index].tags = normalized
     writeList()
     return { tags: normalized, allTags: note_list.tags }
+}
+function renameTag(data){
+    if(!data) throw new Error("invalid tag payload")
+    const from = normalizeTagName(data.from)
+    const to = normalizeTagName(data.to)
+    if(note_list == null){
+        throw new Error("list is not inited")
+    }
+    note_list = readNoteList()
+    if(from.toLowerCase() === to.toLowerCase()){
+        return { changed:0, allTags:note_list.tags }
+    }
+    const key = from.toLowerCase()
+    let changed = 0
+    note_list.notes.forEach(note=>{
+        if(!Array.isArray(note.tags)) return
+        if(!note.tags.some(tag=>String(tag).trim().toLowerCase() === key)) return
+        note.tags = dedupeTags(note.tags.map(tag=>String(tag).trim().toLowerCase() === key ? to : tag))
+        changed++
+    })
+    if(changed > 0) writeList()
+    return { changed:changed, allTags:note_list.tags }
+}
+function removeTag(data){
+    if(!data) throw new Error("invalid tag payload")
+    const target = normalizeTagName(data.tag)
+    if(note_list == null){
+        throw new Error("list is not inited")
+    }
+    note_list = readNoteList()
+    const key = target.toLowerCase()
+    let changed = 0
+    note_list.notes.forEach(note=>{
+        if(!Array.isArray(note.tags)) return
+        if(!note.tags.some(tag=>String(tag).trim().toLowerCase() === key)) return
+        const rest = note.tags.filter(tag=>String(tag).trim().toLowerCase() !== key)
+        note.tags = dedupeTags(rest)
+        changed++
+    })
+    if(changed > 0) writeList()
+    return { changed:changed, allTags:note_list.tags }
 }
 function getNoteEntry(t){
     if(note_list == null){
@@ -610,7 +829,13 @@ function getNotes(){
     }
     note_list = readNoteList()
     syncWatchers()
-    return note_list
+    return { notes:note_list.notes, tags:note_list.tags }
+}
+function getNoteContentPath(t){
+    return getNoteFile(getNoteEntry(t))
+}
+function getNoteContentPathByEntry(entry){
+    return getNoteFile(entry)
 }
 function readNote(t){
     return fs.readFileSync(getNoteFile(getNoteEntry(t)),{ encoding:'utf-8' })
@@ -684,10 +909,19 @@ module.exports = {
     note_init:note_init,
     getNotes:getNotes,
     readNote:readNote,
+    getNoteContentPath:getNoteContentPath,
+    getNoteContentPathByEntry:getNoteContentPathByEntry,
     saveNote:saveNote,
     createNote:createNote,
     deleteNote:deleteNote,
+    renameNote:renameNote,
+    getTrash:getTrash,
+    restoreNote:restoreNote,
+    purgeNote:purgeNote,
+    emptyTrash:emptyTrash,
     getTags:getTags,
     setNoteTags:setNoteTags,
+    renameTag:renameTag,
+    removeTag:removeTag,
     watchNotes:watchNotes
 }

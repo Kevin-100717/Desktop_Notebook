@@ -10,6 +10,8 @@
         color-scheme: dark;
         --icon-document:url(@/assets/Document.svg);
         --icon-setting:url(@/assets/Setting.svg);
+        --icon-trash:url(@/assets/Trash.svg);
+    --icon-graph:url(@/assets/Graph.svg);
         --icon-plus:url(@/assets/Plus.svg);
         --bg-1:#161618;
         --surface-1:#1a1b1f;
@@ -124,6 +126,39 @@
 
       *::-webkit-scrollbar-thumb:hover {
           background: var(--scroll-thumb-hover);
+      }
+      .card-dropdown.el-popper{
+        background: var(--block-1);
+        border: 1px solid var(--border-1);
+        border-radius: var(--radius-1);
+        box-shadow: none;
+        padding: 4px;
+      }
+      .card-dropdown .el-dropdown-menu{
+        background: transparent;
+        padding: 0;
+      }
+      .card-dropdown .el-dropdown-menu__item{
+        color: var(--text-1);
+        font-size: 14px;
+        border-radius: var(--radius-1);
+        padding: 8px 14px;
+      }
+      .card-dropdown .el-dropdown-menu__item:not(.is-disabled):hover{
+        color: var(--accent-strong);
+        background: var(--accent-soft);
+      }
+      .card-dropdown .el-dropdown-menu__item--divided{
+        border-top: 1px solid var(--border-1);
+        margin-top: 4px;
+      }
+      .card-dropdown .el-dropdown-menu__item.menu-danger{
+        color: #ff4d4f;
+        font-weight: 500;
+      }
+      .card-dropdown .el-dropdown-menu__item.menu-danger:not(.is-disabled):hover{
+        color: #ffffff;
+        background: #ff4d4f;
       }
     </style>
   </head>

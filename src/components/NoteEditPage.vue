@@ -1,8 +1,12 @@
 <template>
+    <div class="edit-page">
     <div id="header-panel">
         <div class="header-top">
             <h1>{{ noteData.det.title }}</h1>
-            <span id="create-time">{{ timeString }}</span>
+            <div class="header-side">
+                <span class="word-count">{{ wordCountText }}</span>
+                <span id="create-time">{{ timeString }}</span>
+            </div>
         </div>
         <div class="tag-bar">
             <el-select
@@ -20,6 +24,20 @@
                 <el-option v-for="tag in allTags" :key="tag" :label="tag" :value="tag"></el-option>
             </el-select>
             <span v-if="tagsSaving" class="tag-status">保存中</span>
+            <div class="view-tools">
+                <button
+                    class="tool-btn"
+                    :class="{ active: reading }"
+                    :title="reading ? '回到编辑模式' : '以阅读模式查看渲染结果'"
+                    @click="toggleReading"
+                >{{ reading ? "编辑" : "阅读" }}</button>
+                <button
+                    class="tool-btn"
+                    :class="{ active: uiState.focus }"
+                    :title="uiState.focus ? '退出专注模式' : '隐藏侧栏、标签栏与 Tab 栏，只留正文'"
+                    @click="toggleFocus"
+                >{{ uiState.focus ? "退出专注" : "专注" }}</button>
+            </div>
         </div>
     </div>
     <div class="editor-wrap">
@@ -40,6 +58,10 @@
                 <span class="loading-track"><i></i></span>
             </div>
         </div>
+        <div v-if="reading" class="reader">
+            <div ref="readerElement" class="reader-body"></div>
+        </div>
+    </div>
     </div>
 </template>
 <script>
@@ -48,16 +70,32 @@ import "vditor/src/assets/less/index.less"
 import { ElNotification, ElOption, ElSelect } from "element-plus"
 import { markRaw } from 'vue'
 import emitter from '../utils/emitter'
+import uiState from '../utils/uiState'
 
 const HEADER_HEIGHT = 112
+const CJK_RANGE = /[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff]/
 
 function editorTheme(theme){
     const dark = theme !== 'light'
     return {
         theme: dark ? 'dark' : 'light',
         content: dark ? 'dark' : 'light',
-        code: dark ? 'monokai' : 'github'
+        code: dark ? 'monokai' : 'github',
+        dark
     }
+}
+function countWords(text){
+    const plain = String(text == null ? "" : text)
+        .replace(/```[\s\S]*?```/g," ")
+        .replace(/[#*`>\[\]()!_|~-]/g," ")
+    let cjk = 0
+    let rest = ""
+    for(const char of plain){
+        if(CJK_RANGE.test(char)) cjk++
+        else rest += char
+    }
+    const words = rest.match(/[A-Za-z0-9]+(?:['-][A-Za-z0-9]+)*/g)
+    return cjk + (words ? words.length : 0)
 }
 
 export default {
@@ -76,6 +114,10 @@ export default {
             tagsSaving:false,
             disposed:false,
             noteText:"",
+            editorText:"",
+            reading:false,
+            wordCount:0,
+            wordTimer:null,
             diskVersion:0,
             readId:0,
             pendingSaveContent:null,
@@ -86,6 +128,12 @@ export default {
         }
     },
     computed:{
+        uiState(){
+            return uiState
+        },
+        wordCountText(){
+            return this.wordCount + " 字"
+        },
         isDirty(){
             if(!this.ready || !this.editor) return false
             try{
@@ -104,16 +152,72 @@ export default {
                 this.allTags = Array.isArray(all) ? all : []
             }catch{}
         },
+        syncEditorText(){
+            if(!this.editor) return
+            try{
+                this.setEditorText(this.editor.getValue())
+            }catch{}
+        },
+        setEditorText(text){
+            if(typeof text !== "string") return
+            this.editorText = text
+            this.scheduleWordCount()
+        },
+        scheduleWordCount(){
+            if(this.wordTimer) clearTimeout(this.wordTimer)
+            this.wordTimer = setTimeout(()=>{
+                this.wordTimer = null
+                if(this.disposed) return
+                this.wordCount = countWords(this.editorText)
+            },400)
+        },
+        currentMarkdown(){
+            if(this.ready && this.editor){
+                try{
+                    const value = this.editor.getValue()
+                    if(typeof value === "string") return value
+                }catch{}
+            }
+            return this.editorText || this.noteText || ""
+        },
+        toggleFocus(){
+            uiState.focus = !uiState.focus
+        },
+        toggleReading(){
+            this.reading = !this.reading
+            if(this.reading) this.renderReader()
+        },
+        renderReader(){
+            this.$nextTick(()=>{
+                const target = this.$refs.readerElement
+                if(!target || this.disposed) return
+                const style = editorTheme(document.documentElement.getAttribute('data-theme'))
+                const markdown = this.currentMarkdown()
+                try{
+                    Promise.resolve(Vditor.preview(target,markdown,{
+                        mode:style.dark ? "dark" : "light",
+                        hljs:{
+                            enable:true,
+                            lineNumber:true,
+                            style:style.code
+                        },
+                        anchor:0,
+                        math:{
+                            engine:"MathJax"
+                        }
+                    })).catch(()=>{
+                        if(!this.disposed && target) target.textContent = markdown
+                    })
+                }catch{
+                    target.textContent = markdown
+                }
+            })
+        },
         async onTagsChange(value){
             const tags = (Array.isArray(value) ? value : [])
                 .filter(item=>typeof item === "string")
                 .map(item=>item.trim())
                 .filter(Boolean)
-            if(tags.length === 0){
-                this.tagList = [...this.savedTags]
-                this.notify("提示","至少保留一个标签","warning")
-                return
-            }
             if(tags.length > 3){
                 this.tagList = [...this.savedTags]
                 this.notify("提示","最多只能使用 3 个标签","warning")
@@ -166,6 +270,7 @@ export default {
             if(canUpdate){
                 this.editor.setValue(note.content)
                 try{this.noteText = this.editor.getValue()}catch{}
+                this.setEditorText(note.content)
             }else{
                 this.notify("提示","文件已更新，当前未保存修改已保留","warning")
             }
@@ -208,6 +313,7 @@ export default {
                         if(this.disposed) return false
                         if(result !== "success") throw new Error(result)
                         this.noteText = content
+                        this.setEditorText(content)
                         this.notify("完成","保存成功","success")
                     }catch{
                         if(!this.disposed) this.notify("错误","保存失败","error")
@@ -223,11 +329,13 @@ export default {
                 this.pendingSaveContent = null
             }
         },
-        applyTheme(theme){            if(!this.editor) return
+        applyTheme(theme){
+            if(!this.editor) return
             const target = editorTheme(theme)
             try{
                 this.editor.setTheme(target.theme,target.content,target.code)
             }catch{}
+            if(this.reading) this.renderReader()
         },
         createVditor(){
             if(this.disposed || this.editor) return
@@ -243,6 +351,10 @@ export default {
                     enable:false
                 },
                 mode:"ir",
+                input:(md)=>{
+                    if(this.disposed) return
+                    this.setEditorText(md)
+                },
                 after:()=>{
                     if(this.disposed){
                         try{editor.destroy()}catch{}
@@ -250,6 +362,8 @@ export default {
                     }
                     editor.setValue(this.noteText)
                     try{this.noteText = editor.getValue()}catch{}
+                    this.syncEditorText()
+                    this.wordCount = countWords(this.editorText)
                     const target = editorTheme(document.documentElement.getAttribute('data-theme'))
                     editor.setTheme(target.theme,target.content,target.code)
                     this.ready = true
@@ -301,10 +415,13 @@ export default {
     activated(){
         this.loadTags()
         this.refreshFromDisk()
+        this.syncEditorText()
+        if(this.reading) this.renderReader()
     },
     beforeUnmount(){
         this.disposed = true
         this.readId++
+        if(this.wordTimer) clearTimeout(this.wordTimer)
         if(this.unsubscribe) this.unsubscribe()
         emitter.off('theme-changed',this.applyTheme)
         if(this.editor){
@@ -314,7 +431,18 @@ export default {
 }
 </script>
 <style scoped>
+.edit-page{
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
 #header-panel{
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 3;
     box-sizing: border-box;
     height: var(--editor-header-height, 112px);
     display: flex;
@@ -340,6 +468,23 @@ export default {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.header-side{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+.word-count{
+    flex-shrink: 0;
+    padding: 5px 12px;
+    font-size: 13px;
+    color: var(--text-2);
+    font-family: var(--font-en);
+    white-space: nowrap;
+    border: 1px solid var(--border-1);
+    border-radius: 999px;
+    background: var(--block-1);
+}
 #create-time{
     flex-shrink: 0;
     padding: 5px 12px;
@@ -350,6 +495,33 @@ export default {
     border: 1px solid var(--border-1);
     border-radius: 999px;
     background: var(--block-1);
+}
+.view-tools{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+.tool-btn{
+    height: 30px;
+    padding: 0 14px;
+    font-size: 13px;
+    color: var(--text-2);
+    background: var(--block-1);
+    border: 1px solid var(--border-1);
+    border-radius: var(--radius-1);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.tool-btn:hover{
+    color: var(--text-1);
+    border-color: var(--border-2);
+}
+.tool-btn.active{
+    color: var(--accent-strong);
+    background: var(--accent-soft);
+    border-color: var(--accent-border);
 }
 .tag-bar{
     display: flex;
@@ -466,7 +638,143 @@ export default {
     color: var(--text-2);
 }
 .vditor{
+    position: absolute;
+    top: var(--editor-header-height, 112px);
+    left: 0;
+    right: 0;
     background: var(--bg-1);
+}
+.reader{
+    position: absolute;
+    top: var(--editor-header-height, 112px);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    overflow-y: auto;
+    background: var(--bg-1);
+    animation: reader-in 0.18s var(--ease);
+}
+@keyframes reader-in{
+    from{ opacity: 0; }
+    to{ opacity: 1; }
+}
+.reader-body{
+    box-sizing: border-box;
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 40px 32px 96px;
+    font-size: 16px;
+    line-height: 1.85;
+    color: var(--text-1);
+    word-break: break-word;
+}
+.reader-body:empty::after{
+    content: "这篇笔记还没有内容";
+    display: block;
+    font-size: 14px;
+    color: var(--text-2);
+}
+.reader-body :deep(h1),
+.reader-body :deep(h2),
+.reader-body :deep(h3),
+.reader-body :deep(h4),
+.reader-body :deep(h5),
+.reader-body :deep(h6){
+    margin: 1.6em 0 0.7em;
+    font-weight: 600;
+    line-height: 1.4;
+}
+.reader-body :deep(h1){ font-size: 28px; }
+.reader-body :deep(h2){
+    font-size: 23px;
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--border-1);
+}
+.reader-body :deep(h3){ font-size: 20px; }
+.reader-body :deep(h4),
+.reader-body :deep(h5),
+.reader-body :deep(h6){ font-size: 17px; }
+.reader-body :deep(p){
+    margin: 0.9em 0;
+}
+.reader-body :deep(a){
+    color: var(--accent-strong);
+    text-decoration: none;
+}
+.reader-body :deep(a:hover){
+    text-decoration: underline;
+}
+.reader-body :deep(blockquote){
+    margin: 1.2em 0;
+    padding: 2px 0 2px 16px;
+    color: var(--text-2);
+    border-left: 3px solid var(--accent-border);
+}
+.reader-body :deep(ul),
+.reader-body :deep(ol){
+    margin: 0.9em 0;
+    padding-left: 1.6em;
+}
+.reader-body :deep(li){
+    margin: 0.35em 0;
+}
+.reader-body :deep(li.task-list-item){
+    list-style: none;
+}
+.reader-body :deep(li.task-list-item input){
+    margin-right: 8px;
+    vertical-align: middle;
+}
+.reader-body :deep(code){
+    padding: 2px 6px;
+    font-size: 0.88em;
+    font-family: var(--font-en);
+    background: var(--block-1);
+    border-radius: var(--radius-1);
+}
+.reader-body :deep(pre){
+    margin: 1.2em 0;
+    padding: 14px 16px;
+    overflow-x: auto;
+    background: var(--block-1);
+    border: 1px solid var(--border-1);
+    border-radius: var(--radius-1);
+}
+.reader-body :deep(pre code){
+    padding: 0;
+    background: transparent;
+    font-size: 13.5px;
+    line-height: 1.7;
+}
+.reader-body :deep(table){
+    width: 100%;
+    margin: 1.2em 0;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+.reader-body :deep(th),
+.reader-body :deep(td){
+    padding: 8px 12px;
+    border: 1px solid var(--border-1);
+    text-align: left;
+}
+.reader-body :deep(th){
+    background: var(--block-1);
+    font-weight: 600;
+}
+.reader-body :deep(img){
+    max-width: 100%;
+    border-radius: var(--radius-1);
+}
+.reader-body :deep(hr){
+    height: 1px;
+    margin: 2em 0;
+    border: 0;
+    background: var(--border-1);
+}
+.reader-body del{
+    color: var(--text-2);
 }
 :deep(.vditor-toolbar){
     background: var(--surface-1);
