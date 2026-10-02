@@ -1,16 +1,28 @@
 const fs = require("fs")
 const path = require("path")
+const crypto = require("crypto")
 var note_list = null
 var dataDir = ""
 var notesDir = ""
 var legacyNotesDir = ""
 var listPath = ""
 var trashDir = ""
-var watchCallback = null
+const watchCallbacks = new Set()   // 托盘与 IPC 各注册一份，单槽会被后注册的覆盖掉
 const watchedFiles = new Map()
 const watchTimers = new Map()
 let listWatched = false
 let listTimer = null
+const IMAGE_MIME_EXT = {
+    "image/png":"png",
+    "image/jpeg":"jpg",
+    "image/jpg":"jpg",
+    "image/gif":"gif",
+    "image/webp":"webp",
+    "image/bmp":"bmp"
+}
+const MAX_IMAGE_BYTES = 12*1024*1024
+const HISTORY_LIMIT = 30
+const HISTORY_STAMP = /^\d{13}-\d{1,6}$/
 const first_new_template = `
 Vditor 是一款**所见即所得**编辑器，支持 *Markdown*。
 
@@ -416,7 +428,9 @@ function note_init(root=process.cwd()){
     listPath = path.join(notesDir,"list.json")
     trashDir = path.join(notesDir,".trash")
     const legacyNotes = legacyNotesDir
-    if(!fs.existsSync(notesDir) && legacyNotes !== notesDir && fs.existsSync(legacyNotes)){
+    // 只有老目录里确实有索引才搬：cwd 是启动器给的，随便搬会把无关目录的 notes 复制进来
+    const legacyLooksValid = fs.existsSync(path.join(legacyNotes,"list.json"))
+    if(!fs.existsSync(notesDir) && legacyNotes !== notesDir && legacyLooksValid && fs.existsSync(legacyNotes)){
         fs.cpSync(legacyNotes,notesDir,{recursive:true})
     }
     if(!fs.existsSync(notesDir)){
@@ -424,23 +438,46 @@ function note_init(root=process.cwd()){
     }
     let created=false
     if(!fs.existsSync(listPath)){
+        // 索引不见了但笔记文件还在（被清理/占用导致没读到）时绝不能播种空列表：
+        // 下一次保存会把整份索引覆盖成空的，所有笔记都变成孤儿文件
+        if(notesDirHasData()) throw new Error("notes/list.json 不见了，但 notes/ 里还有笔记文件；先别启动，把索引找回来再用")
         fs.writeFileSync(listPath,"{\"notes\":[],\"trash\":[]}")
         created=true
     }
     note_list = readNoteList()
     if(created) createNewNote(true)
 }
+// notes/ 里除索引自己以外还有东西，就说明索引本该存在
+function notesDirHasData(){
+    try{
+        return fs.readdirSync(notesDir).some(name=>name !== ".trash" && name !== "list.json" && !name.startsWith("list.json."))
+    }catch{
+        return false
+    }
+}
 function readNoteList(){
     let raw = null
     try{
         raw = fs.readFileSync(listPath,"utf-8")
     }catch(error){
+        // 只有「文件不存在且没有别的笔记」才算空列表；读失败或索引丢了都要报出去，
+        // 当成空的后面随便一次保存就把整份索引覆盖没了
+        if(!error || error.code !== "ENOENT") throw error
+        if(notesDirHasData()) throw new Error("notes/list.json 不见了，但 notes/ 里还有笔记文件；把索引找回来再用")
         raw = null
     }
     let data = null
     try{
         data = raw != null ? JSON.parse(raw) : null
     }catch(error){
+        // 可能是外部程序正在写，读到半截字节：再读一次，字节变了就抛出去让调用方重试，
+        // 不能当成损坏重建空列表（那会把真实索引顶掉）
+        let again = null
+        try{
+            again = fs.readFileSync(listPath,"utf-8")
+        }catch{}
+        if(again !== raw) throw new Error("notes/list.json 正在被写入，稍后再试")
+        backupBrokenList()
         data = null
     }
     if(data == null || typeof data !== "object" || !Array.isArray(data.notes)){
@@ -475,6 +512,9 @@ function normalizeDet(det,fallback){
 function backupBrokenList(){
     try{
         if(!fs.existsSync(listPath)) return
+        const dir = path.dirname(listPath), base = path.basename(listPath)
+        // 一直读不出来时只备一次，别每次读都复制一份堆满目录
+        if(fs.readdirSync(dir).some(name=>name.startsWith(base+".broken-"))) return
         const backup = listPath + ".broken-" + Date.now()
         fs.copyFileSync(listPath,backup)
         console.warn("[noteFile] notes/list.json 解析失败，已备份为 " + path.basename(backup) + " 并重建空列表")
@@ -484,7 +524,7 @@ function writeAtomic(file,content){
     const tempPath = file+".tmp-"+process.pid+"-"+Date.now()
     try{
         fs.writeFileSync(tempPath,content,"utf-8")
-        fs.renameSync(tempPath,file)
+        retryRename(tempPath,file)   // Windows 上目标可能瞬时被占用，rename 要带重试
     }catch(error){
         try{fs.unlinkSync(tempPath)}catch{}
         throw error
@@ -570,17 +610,88 @@ function stopWatchFiles(files){
         watchedFiles.delete(file)
     })
 }
+const LOCK_CODES = new Set(["EPERM","EBUSY","EACCES"])
+function retryRename(from,to){
+    // Windows 上目录里刚被读取/显示的文件（如图片、刚解除监听的 .md）可能
+    // 瞬时被占用，renameSync 会丢 EPERM/EBUSY，稍等片刻重试即可
+    let attempts = 0
+    for(;;){
+        try{
+            fs.renameSync(from,to)
+            return
+        }catch(error){
+            if(!LOCK_CODES.has(error && error.code)) throw error
+            attempts++
+            if(attempts > 8) throw error
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,40)
+        }
+    }
+}
+const pendingRemoves = new Map()                 // 复制兜底后清源目录的延时任务，避免抛错把状态弄成半删
+function scheduleRemoveLater(target){
+    if(pendingRemoves.has(target)) return
+    const state = { tries:0 }
+    pendingRemoves.set(target,state)
+    const attempt = ()=>{
+        try{
+            fs.rmSync(target,{ recursive:true, force:true })
+            pendingRemoves.delete(target)
+            return
+        }catch(error){
+            if(!error || !LOCK_CODES.has(error.code) || state.tries++ >= 200){ // 至少再拖够 60s
+                pendingRemoves.delete(target)
+                return
+            }
+            setTimeout(attempt,300)
+        }
+    }
+    setTimeout(attempt,300)
+}
+function rmSource(target){
+    // 「复制进回收站」已经成功，源目录删除是尽力而为：删得掉最好，删不掉（文件仍被
+    // 打开且不允许 unlink，如编辑器正显示着图片）就延时重试，绝不抛错——绝不因为
+    // 这里失败让 list.json 没机会更新，从而出现「笔记还在列表、文件却没了」的幽灵态。
+    try{
+        fs.rmSync(target,{ recursive:true, force:true })
+    }catch(error){
+        if(error && LOCK_CODES.has(error && error.code)) scheduleRemoveLater(target)
+    }
+}
 function moveFile(from,to){
     try{
-        fs.renameSync(from,to)
+        retryRename(from,to)
     }catch(error){
         if(error && error.code === "EXDEV"){
             fs.copyFileSync(from,to)
-            fs.unlinkSync(from)
+            rmSource(from)
             return
         }
         throw error
     }
+}
+function moveDir(from,to){                       // 整目录搬家，assets 与 .history 必须跟着笔记走
+    try{
+        retryRename(from,to)
+    }catch(error){
+        if(!error || !(error.code === "EXDEV" || LOCK_CODES.has(error.code))) throw error
+        // Windows：只要目录下有一个文件仍被占用（如笔记正开着、图片经 dnote-img:// 显示中），
+        // renameSync 就会一直 EPERM。改走「复制进回收站 + 尽力删除源目录」——复制只要读权限，
+        // 占用不再成为阻碍，数据照样安全搬走；源目录删不掉就延时重试，绝不影响回收站写名单。
+        fs.cpSync(from,to,{ recursive:true })
+        rmSource(from)
+    }
+}
+function isNoteDir(dir,tid){
+    if(!dir) return false
+    const target = path.resolve(dir)
+    if(target === path.resolve(notesDir) || target === path.resolve(trashDir)) return false
+    return path.basename(target) === String(tid)
+}
+// time 会拼进回收站/笔记目录名，索引被改坏时 ".." 能把删除操作带出数据目录
+function timeKey(t){
+    const key = String(t)
+    if(!/^[0-9A-Za-z_-]+$/.test(key)) throw new Error("invalid note id")
+    return key
 }
 function moveToTrash(t){
     note_list = readNoteList()
@@ -590,12 +701,23 @@ function moveToTrash(t){
     const mdFile = getNoteFile(note,".md")
     const jsonFile = getNoteFile(note,".json")
     const base = path.basename(mdFile,".md")
-    const targetDir = path.join(trashDir,String(note.time))
+    const targetDir = path.join(trashDir,timeKey(note.time))
+    const noteDir = path.dirname(mdFile)
     stopWatchFiles([mdFile,jsonFile])
-    fs.mkdirSync(targetDir,{recursive:true})
-    moveFile(mdFile,path.join(targetDir,base+".md"))
-    moveFile(jsonFile,path.join(targetDir,base+".json"))
-    try{fs.rmdirSync(path.dirname(mdFile))}catch{}
+    const dedicated = isNoteDir(noteDir,note.time)
+    if(dedicated){
+        // 源目录先确认还在：已经没了就别把回收站里的同名副本删掉再搬（那样会两手空空）
+        if(!fs.existsSync(noteDir)) throw new Error("note files are missing")
+        fs.mkdirSync(trashDir,{recursive:true})
+        try{ fs.rmSync(targetDir,{ recursive:true, force:true }) }catch{}
+        moveDir(noteDir,targetDir)            // 整目录进回收站，assets 与 .history 不留在原地
+    }else{
+        if(!fs.existsSync(mdFile)) throw new Error("note files are missing")
+        fs.mkdirSync(targetDir,{recursive:true})
+        moveFile(mdFile,path.join(targetDir,base+".md"))
+        moveFile(jsonFile,path.join(targetDir,base+".json"))
+        try{fs.rmdirSync(noteDir)}catch{}
+    }
     note_list.notes.splice(index,1)
     note_list.trash.push({
         time:note.time,
@@ -604,7 +726,21 @@ function moveToTrash(t){
         tags:Array.isArray(note.tags)?note.tags:[],
         deletedAt:Date.now()
     })
-    writeList()
+    try{
+        writeList()
+    }catch(error){
+        // 索引没写成要把文件原样搬回去，否则文件躺在回收站、索引却还当它在用
+        try{
+            if(dedicated) moveDir(targetDir,noteDir)
+            else{
+                moveFile(path.join(targetDir,base+".md"),mdFile)
+                moveFile(path.join(targetDir,base+".json"),jsonFile)
+            }
+            note_list.trash.pop()
+            note_list.notes.splice(index,0,note)
+        }catch{}
+        throw error
+    }
     return "success"
 }
 function deleteNote(t){
@@ -641,10 +777,27 @@ function restoreNote(t){
     const mdFile = getNoteFile(entry,".md")
     const jsonFile = getNoteFile(entry,".json")
     const base = path.basename(mdFile,".md")
-    const targetDir = path.join(notesDir,String(entry.time))
-    fs.mkdirSync(targetDir,{recursive:true})
-    moveFile(mdFile,path.join(targetDir,base+".md"))
-    moveFile(jsonFile,path.join(targetDir,base+".json"))
+    const targetDir = path.join(notesDir,timeKey(entry.time))
+    const sourceDir = path.dirname(mdFile)
+    let movedWholeDir = false
+    if(isNoteDir(sourceDir,entry.time) && fs.existsSync(path.join(targetDir,base+".md")) === false){
+        try{ fs.rmSync(targetDir,{ recursive:true, force:true }) }catch{}
+        moveDir(sourceDir,targetDir)          // 连 assets 与 .history 一起搬回
+        movedWholeDir = true
+    }else{
+        if(!fs.existsSync(mdFile)) throw new Error("trash item files are missing")
+        fs.mkdirSync(targetDir,{recursive:true})
+        moveFile(mdFile,path.join(targetDir,base+".md"))
+        moveFile(jsonFile,path.join(targetDir,base+".json"))
+        if(isNoteDir(sourceDir,entry.time)){
+            ["assets",".history"].forEach(name=>{
+                const from = path.join(sourceDir,name)
+                if(!fs.existsSync(from)) return
+                try{ moveDir(from,path.join(targetDir,name)) }catch{}
+            })
+            try{fs.rmdirSync(sourceDir)}catch{}
+        }
+    }
     note_list.notes.push({
         time:entry.time,
         file:path.relative(dataDir,path.join(targetDir,base)),
@@ -652,7 +805,22 @@ function restoreNote(t){
         tags:Array.isArray(entry.tags)?entry.tags:[]
     })
     note_list.trash.splice(index,1)
-    writeList()
+    try{
+        writeList()
+    }catch(error){
+        // 索引没写成要搬回回收站，不然文件在 notes/ 里、索引还当它在回收站
+        try{
+            if(movedWholeDir){
+                moveDir(targetDir,sourceDir)
+            }else{
+                moveFile(path.join(targetDir,base+".md"),mdFile)
+                moveFile(path.join(targetDir,base+".json"),jsonFile)
+            }
+            note_list.notes.pop()
+            note_list.trash.splice(index,0,entry)
+        }catch{}
+        throw error
+    }
     syncWatchers()
     return { time:entry.time, title:entry.det && entry.det.title }
 }
@@ -665,7 +833,9 @@ function purgeNote(t){
     try{
         const mdFile = getNoteFile(entry,".md")
         stopWatchFiles([mdFile,getNoteFile(entry,".json")])
-        noteDir = path.dirname(mdFile)
+        // 只删这条回收站条目自己的目录：路径异常时宁可不删，也不能连锅端
+        const dir = path.dirname(mdFile)
+        if(isNoteDir(dir,entry.time)) noteDir = dir
     }catch{}
     note_list.trash.splice(index,1)
     writeList()
@@ -688,10 +858,24 @@ function renameNote(data){
     const entry = getNoteEntry(data.tid)
     const detFile = getNoteFile(entry,".json")
     let det = {}
+    let raw = null
     try{
-        const parsed = JSON.parse(fs.readFileSync(detFile,{ encoding:'utf-8' }))
-        if(parsed && typeof parsed === "object") det = parsed
-    }catch{}
+        raw = fs.readFileSync(detFile,{ encoding:'utf-8' })
+    }catch(error){
+        // 文件不在才算新的，读失败要报出去，免得把 createAt 之类字段冲掉
+        if(!error || error.code !== "ENOENT") throw error
+    }
+    if(raw != null){
+        try{
+            const parsed = JSON.parse(raw)
+            if(parsed && typeof parsed === "object") det = parsed
+        }catch{
+            try{
+                const backup = detFile + ".broken-" + Date.now()
+                fs.copyFileSync(detFile,backup)
+            }catch{}
+        }
+    }
     det.title = title
     writeAtomic(detFile,JSON.stringify(det))
     note_list = readNoteList()
@@ -840,27 +1024,149 @@ function getNoteContentPathByEntry(entry){
 function readNote(t){
     return fs.readFileSync(getNoteFile(getNoteEntry(t)),{ encoding:'utf-8' })
 }
-function saveNote(data){
-    if(!data || typeof data.content !== "string") throw new Error("invalid note content")
-    const file = getNoteFile(getNoteEntry(data.tid))
-    writeAtomic(file,data.content)
+function getNoteDir(entry){
+    return path.dirname(getNoteFile(entry,""))
+}
+const IMAGE_MAGIC = {
+    "image/png":[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a],
+    "image/jpeg":[0xff,0xd8,0xff],
+    "image/gif":[0x47,0x49,0x46,0x38],
+    "image/bmp":[0x42,0x4d]
+}
+function matchImageMagic(buffer,mime){
+    if(mime === "image/webp"){
+        return buffer.length >= 12
+            && buffer.slice(0,4).toString("ascii") === "RIFF"
+            && buffer.slice(8,12).toString("ascii") === "WEBP"
+    }
+    const magic = IMAGE_MAGIC[mime]
+    if(!magic) return false
+    return magic.every((byte,index)=>buffer[index] === byte)
+}
+function saveNoteImage(data){
+    if(!data || data.tid == null) throw new Error("invalid image payload")
+    const mime = typeof data.mime === "string" ? data.mime.trim().toLowerCase() : ""
+    const ext = IMAGE_MIME_EXT[mime]
+    if(!ext) throw new Error("unsupported image type: " + mime)
+    if(typeof data.base64 !== "string" || data.base64.length === 0) throw new Error("invalid image data")
+    if(!/^[A-Za-z0-9+/]+={0,2}$/.test(data.base64.replace(/\s+/g,""))) throw new Error("invalid image data")
+    const buffer = Buffer.from(data.base64,"base64")
+    if(buffer.length === 0) throw new Error("invalid image data")
+    if(buffer.length > MAX_IMAGE_BYTES) throw new Error("image is larger than 12MB")
+    if(!matchImageMagic(buffer,mime)) throw new Error("image content does not match " + mime)
+    const dir = path.join(getNoteDir(getNoteEntry(data.tid)),"assets")
+    fs.mkdirSync(dir,{recursive:true})
+    const name = crypto.createHash("sha1").update(buffer).digest("hex").slice(0,16)+"."+ext
+    const file = path.join(dir,name)
+    if(!fs.existsSync(file)) writeAtomic(file,buffer)   // 原子写：写一半崩了不会留下半张图被反复复用
+    return { name:name, path:"./assets/"+name, size:buffer.length, mime:mime }
+}
+const ASSET_NAME_PATTERN = /^[0-9a-f]{16}\.(?:png|jpe?g|gif|webp|bmp)$/
+function collectAssetRefs(content){
+    if(typeof content !== "string") return new Set()
+    const out = new Set()
+    const re = /(?:\.\/)?assets\/([0-9a-f]{16}\.(?:png|jpe?g|gif|webp|bmp))/g
+    let match = re.exec(content)
+    while(match !== null){
+        out.add(match[1])
+        match = re.exec(content)
+    }
+    return out
+}
+function garbageCollectAssets(entry,content){
+    // 保存后清理失效图片：正文不再引用的哈希图片立即删除（与历史版本无关）
+    const assets = path.join(getNoteDir(entry),"assets")
+    if(!fs.existsSync(assets)) return
+    const keep = collectAssetRefs(content)
+    for(const name of fs.readdirSync(assets)){
+        if(!ASSET_NAME_PATTERN.test(name)) continue
+        if(keep.has(name)) continue
+        try{ fs.unlinkSync(path.join(assets,name)) }catch{}
+    }
+}
+function getHistoryDir(entry){
+    return path.join(getNoteDir(entry),".history")
+}
+function historyStamps(dir){
+    try{
+        return fs.readdirSync(dir)
+            .filter(name=>name.endsWith(".md") && HISTORY_STAMP.test(name.slice(0,-3)))
+            .sort()
+    }catch{
+        return []
+    }
+}
+function pushHistory(entry,content){
+    if(typeof content !== "string") return
+    try{
+        const dir = getHistoryDir(entry)
+        fs.mkdirSync(dir,{recursive:true})
+        const stamp = Date.now()+"-"+String(Math.round(Math.random()*100000))
+        writeAtomic(path.join(dir,stamp+".md"),content)   // 半截快照会被历史面板当成可还原版本
+        const files = historyStamps(dir)
+        while(files.length > HISTORY_LIMIT){
+            try{ fs.unlinkSync(path.join(dir,files.shift())) }catch{}
+        }
+    }catch{}
+}
+function historyFile(entry,stamp){
+    if(!HISTORY_STAMP.test(String(stamp))) throw new Error("invalid history stamp")
+    return path.join(getHistoryDir(entry),String(stamp)+".md")
+}
+function getNoteHistory(t){
+    const entry = getNoteEntry(t)
+    const dir = getHistoryDir(entry)
+    const items = historyStamps(dir).reverse().map(name=>{
+        let size = 0
+        try{ size = fs.statSync(path.join(dir,name)).size }catch{}
+        return { stamp:name.slice(0,-3), time:Number(name.slice(0,13)) || 0, size:size }
+    })
+    return { items:items, limit:HISTORY_LIMIT }
+}
+function readNoteHistory(data){
+    if(!data || data.tid == null) throw new Error("invalid history payload")
+    const entry = getNoteEntry(data.tid)
+    const file = historyFile(entry,data.stamp)
+    if(!fs.existsSync(file)) throw new Error("history is not found")
+    return fs.readFileSync(file,{ encoding:'utf-8' })
+}
+function restoreNoteHistory(data){
+    if(!data || data.tid == null) throw new Error("invalid history payload")
+    const entry = getNoteEntry(data.tid)
+    const file = historyFile(entry,data.stamp)
+    if(!fs.existsSync(file)) throw new Error("history is not found")
+    const snapshot = fs.readFileSync(file,{ encoding:'utf-8' })
+    const target = getNoteFile(entry)
+    const current = fs.readFileSync(target,{ encoding:'utf-8' })
+    if(current === snapshot) return "success"
+    pushHistory(entry,current)
+    writeAtomic(target,snapshot)
     return "success"
 }
-function syncWatchers(){
-    if(!watchCallback) return
-    if(!listWatched){
-        fs.watchFile(listPath,{persistent:true,interval:200},()=>{
-            clearTimeout(listTimer)
-            listTimer = setTimeout(()=>{
-                try{
-                    note_list = readNoteList()
-                    syncWatchers()
-                    watchCallback({list:true})
-                }catch{}
-            },100)
-        })
-        listWatched = true
+function saveNote(data){
+    if(!data || typeof data.content !== "string") throw new Error("invalid note content")
+    const entry = getNoteEntry(data.tid)
+    const file = getNoteFile(entry)
+    let previous = null
+    try{
+        previous = fs.readFileSync(file,{ encoding:'utf-8' })
+    }catch(error){
+        // 读不出来就不留历史直接覆盖是危险的，先报出去
+        if(!error || error.code !== "ENOENT") throw error
     }
+    if(previous != null && previous !== data.content) pushHistory(entry,previous)
+    writeAtomic(file,data.content)
+    garbageCollectAssets(entry,data.content)
+    return "success"
+}
+function notifyWatchers(payload){
+    watchCallbacks.forEach(callback=>{
+        try{ callback(payload) }catch{}
+    })
+}
+function syncWatchers(){
+    if(watchCallbacks.size === 0) return
+    ensureListWatcher()
     const current = new Map()
     note_list.notes.forEach(note=>{
         let file
@@ -870,25 +1176,45 @@ function syncWatchers(){
             return
         }
         current.set(file,note)
-        const watched = watchedFiles.get(file)
-        if(watched != null && watched != note.time){
-            clearTimeout(watchTimers.get(file))
-            watchTimers.delete(file)
-            fs.unwatchFile(file)
-            watchedFiles.delete(file)
-        }
-        if(watchedFiles.has(file)) return
-        fs.watchFile(file,{persistent:true,interval:200},()=>{
-            clearTimeout(watchTimers.get(file))
-            watchTimers.set(file,setTimeout(()=>{
-                try{
-                    const content = fs.readFileSync(file,{ encoding:'utf-8' })
-                    watchCallback({tid:note.time,content})
-                }catch{}
-            },100))
-        })
-        watchedFiles.set(file,note.time)
+        syncNoteWatcher(file,note)
     })
+    pruneWatchers(current)
+}
+function ensureListWatcher(){
+    if(listWatched) return
+    fs.watchFile(listPath,{persistent:true,interval:200},()=>{
+        clearTimeout(listTimer)
+        listTimer = setTimeout(()=>{
+            try{
+                note_list = readNoteList()
+                syncWatchers()
+                notifyWatchers({list:true})
+            }catch{}
+        },100)
+    })
+    listWatched = true
+}
+function syncNoteWatcher(file,note){
+    const watched = watchedFiles.get(file)
+    if(watched != null && watched != note.time){
+        clearTimeout(watchTimers.get(file))
+        watchTimers.delete(file)
+        fs.unwatchFile(file)
+        watchedFiles.delete(file)
+    }
+    if(watchedFiles.has(file)) return
+    fs.watchFile(file,{persistent:true,interval:200},()=>{
+        clearTimeout(watchTimers.get(file))
+        watchTimers.set(file,setTimeout(()=>{
+            try{
+                const content = fs.readFileSync(file,{ encoding:'utf-8' })
+                notifyWatchers({tid:note.time,content})
+            }catch{}
+        },100))
+    })
+    watchedFiles.set(file,note.time)
+}
+function pruneWatchers(current){
     for(const file of watchedFiles.keys()){
         if(!current.has(file)){
             clearTimeout(watchTimers.get(file))
@@ -902,7 +1228,7 @@ function watchNotes(callback){
     if(note_list == null){
         throw new Error("list is not inited")
     }
-    watchCallback = callback
+    watchCallbacks.add(callback)
     syncWatchers()
 }
 module.exports = {
@@ -910,8 +1236,13 @@ module.exports = {
     getNotes:getNotes,
     readNote:readNote,
     getNoteContentPath:getNoteContentPath,
+    getNoteEntry:getNoteEntry,
     getNoteContentPathByEntry:getNoteContentPathByEntry,
     saveNote:saveNote,
+    saveNoteImage:saveNoteImage,
+    getNoteHistory:getNoteHistory,
+    readNoteHistory:readNoteHistory,
+    restoreNoteHistory:restoreNoteHistory,
     createNote:createNote,
     deleteNote:deleteNote,
     renameNote:renameNote,

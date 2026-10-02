@@ -12,6 +12,12 @@ contextBridge.exposeInMainWorld('electron',{
     getNoteList:()=>ipcRenderer.invoke("get-notelist"),
     getNoteContent:(tid)=>ipcRenderer.invoke("get-notecontent",tid),
     saveNote:(tid,content)=>ipcRenderer.invoke("save-content",{tid:tid,content:content}),
+    saveNoteImage:(tid,base64,mime)=>ipcRenderer.invoke("save-note-image",{tid:tid,base64:base64,mime:mime}),
+    noteImageUrl:(tid,name)=>"dnote-img://asset/"+encodeURIComponent(String(tid))+"/"+encodeURIComponent(String(name)),
+    getNoteHistory:(tid)=>ipcRenderer.invoke("get-note-history",tid),
+    readNoteHistory:(tid,stamp)=>ipcRenderer.invoke("read-note-history",{tid:tid,stamp:stamp}),
+    restoreNoteHistory:(tid,stamp)=>ipcRenderer.invoke("restore-note-history",{tid:tid,stamp:stamp}),
+    exportNoteDoc:(tid,format,html)=>ipcRenderer.invoke("export-note-doc",{tid:tid,format:format,html:html}),
     createNote:(title)=>ipcRenderer.invoke("create-note",title),
     deleteNote:(tid)=>ipcRenderer.invoke("delete-note",tid),
     renameNote:(tid,title)=>ipcRenderer.invoke("rename-note",{tid:tid,title:title}),
@@ -20,6 +26,7 @@ contextBridge.exposeInMainWorld('electron',{
     renameTag:(from,to)=>ipcRenderer.invoke("rename-tag",{from:from,to:to}),
     removeTag:(tag)=>ipcRenderer.invoke("remove-tag",{tag:tag}),
     searchContent:(keyword)=>ipcRenderer.invoke("search-content",keyword),
+    getNoteBacklinks:(tid)=>ipcRenderer.invoke("get-note-backlinks",tid),
     getTrash:()=>ipcRenderer.invoke("get-trash"),
     restoreTrash:(kind,tid)=>ipcRenderer.invoke("restore-trash",{kind:kind,tid:tid}),
     purgeTrash:(kind,tid)=>ipcRenderer.invoke("purge-trash",{kind:kind,tid:tid}),
@@ -34,6 +41,9 @@ contextBridge.exposeInMainWorld('electron',{
     removeGraphNode:(id)=>ipcRenderer.invoke("remove-graph-node",{id:id}),
     addGraphEdge:(from,to,fromSide)=>ipcRenderer.invoke("add-graph-edge",{from:from,to:to,fromSide:fromSide}),
     removeGraphEdge:(id)=>ipcRenderer.invoke("remove-graph-edge",{id:id}),
+    addGraphGroup:(payload)=>ipcRenderer.invoke("add-graph-group",payload||{}),
+    updateGraphGroup:(payload)=>ipcRenderer.invoke("update-graph-group",payload||{}),
+    removeGraphGroup:(id)=>ipcRenderer.invoke("remove-graph-group",{id:id}),
     onGraphUpdated:(callback)=>{
         const listener=(_event,info)=>callback(info)
         ipcRenderer.on("graph-updated",listener)

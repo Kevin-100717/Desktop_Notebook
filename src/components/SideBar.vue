@@ -5,6 +5,10 @@
             <div class="icon" :style="{ maskImage: item.icon }"></div>
             <p>{{ item.name }}</p>
         </div>
+        <div class="menu-item quick-entry" title="秒开笔记（Ctrl + P）" @click="openQuickOpen">
+            <div class="icon" :style="{ maskImage: 'var(--icon-search)' }"></div>
+            <p>快速</p>
+        </div>
     </div>
 </template>
 
@@ -17,10 +21,10 @@ export default {
             curr:0,
             sliderTop: 0,
             menuList:[
-                { name:"Notes", icon:"var(--icon-document)" },
-                { name:"知识网", icon:"var(--icon-graph)", title:"编辑我的知识网" },
-                { name:"Trash", icon:"var(--icon-trash)" },
-                { name:"Setting", icon:"var(--icon-setting)" }
+                { name:"笔记", icon:"var(--icon-document)", title:"我的笔记" },
+                { name:"知识网", icon:"var(--icon-graph)", title:"把笔记连成一张网" },
+                { name:"回收站", icon:"var(--icon-trash)", title:"误删的笔记在这里" },
+                { name:"设置", icon:"var(--icon-setting)", title:"主题、快捷键与备份" }
             ],
             routes:[
                 "/",
@@ -41,6 +45,9 @@ export default {
         pushRouter(ind){
             this.syncRoute(this.routes[ind])
             emitter.emit("push-router",this.routes[ind])
+        },
+        openQuickOpen(){
+            emitter.emit("open-quick-open")
         }
     },
     watch:{
@@ -97,6 +104,10 @@ export default {
     font-size: 11px;
     letter-spacing: 0.3px;
     transition: color 0.15s var(--ease);
+}
+.quick-entry{
+    margin-top: auto;
+    margin-bottom: 12px;
 }
 .menu-item:hover p,.menu-item.active p{
     color: var(--text-1);

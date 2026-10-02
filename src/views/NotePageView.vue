@@ -38,6 +38,7 @@ import { ElMessageBox } from 'element-plus';
 import emitter from '../utils/emitter';
 import uiState from '../utils/uiState';
 import NoteListPage from '../components/NoteListPage.vue';
+import NoteEditPage from '../components/NoteEditPage.vue';
 
 let tabId = 0;
 
@@ -67,6 +68,8 @@ export default {
             return this.tabRefs.get(id)
         },
         addTab({ title = 'New Tab', component = null, props = {}, closable = true } = {}) {
+            if(component == null && props.noteData != null) component = NoteEditPage
+            if(component == null) return
             const tid = props.noteData?.time
             const current = this.tabs.findIndex(tab=>tab.props.noteData?.time == tid)
             if(tid != null && current !== -1){
@@ -127,13 +130,43 @@ export default {
                 tab.title = title
             })
         },
-        onTrayAction(action) {
+        onTrayAction(payload) {
+            const action = payload && typeof payload === 'object' ? payload.action : payload
+            if(action === 'open-note'){
+                this.openNoteByTid(payload && payload.tid)
+                return
+            }
             if(action !== 'new-note' && action !== 'new-sticky') return
             const listIndex = this.tabs.findIndex(tab=>tab.component === NoteListPage)
             if(listIndex === -1) return
             this.activeTab = listIndex
             this.$nextTick(()=>{
                 emitter.emit(action === 'new-note' ? 'request-create-note' : 'request-create-sticky')
+            })
+        },
+        // 托盘里点「最近写过的」直接开这篇；还没打开过就先补一个标签页。
+        async openNoteByTid(tid){
+            if(tid == null) return
+            const time = String(tid)
+            const exist = this.tabs.findIndex(tab=>tab.component === NoteEditPage && tab.props && tab.props.noteData && String(tab.props.noteData.time) === time)
+            if(exist !== -1){
+                this.activeTab = exist
+                return
+            }
+            let entry = null
+            try{
+                const list = await window.electron.getNoteList()
+                const rows = list && Array.isArray(list.notes) ? list.notes : []
+                entry = rows.find(item=>item && String(item.time) === time) || null
+            }catch{
+                entry = null
+            }
+            if(!entry) return
+            this.addTab({
+                title:entry.det && entry.det.title ? entry.det.title : '没标题',
+                component:NoteEditPage,
+                props:{ noteData:entry },
+                closable:true
             })
         }
     },

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
     <div id="note-list-page">
         <div id="note-panel">
             <div id="control-panel">
@@ -11,20 +11,35 @@
                     <p>新建便签</p>
                 </div>
                 <el-input
+                    v-if="viewMode === 'list'"
                     v-model="searchKeyword"
                     class="search-input"
-                    placeholder="搜索标题与正文"
+                    placeholder="搜标题或正文"
                     clearable
                     :maxlength="60"
                     @input="onSearchInput"
                     @clear="clearSearch"
                 ></el-input>
                 <div class="import-row">
-                    <button class="mini-btn" :disabled="importing" @click="importNotes('files')">导入文件</button>
+                    <button class="mini-btn" :disabled="importing" @click="importNotes('files')">导入</button>
                     <button class="mini-btn" :disabled="importing" @click="importNotes('folder')">导入文件夹</button>
                 </div>
             </div>
             <div id="note-list">
+                <div class="list-mode-toggle">
+                    <button
+                        class="list-mode-btn"
+                        :class="{ active: viewMode === 'list' }"
+                        :title="viewMode === 'list' ? '正在看列表' : '换成按日期排的列表'"
+                        @click="switchView('list')"
+                    >列表</button>
+                    <button
+                        class="list-mode-btn"
+                        :class="{ active: viewMode === 'calendar' }"
+                        :title="viewMode === 'calendar' ? '正在看日历' : '换成日历，看看哪天写得勤'"
+                        @click="switchView('calendar')"
+                    >日历</button>
+                </div>
                 <template v-if="isSearching">
                     <h2>搜索结果 <span class="result-count">{{ searchRows.length }}</span></h2><br>
                     <div class="tag-filter">
@@ -44,10 +59,10 @@
                             @click="searchKind = 'sticky'"
                         >便签</button>
                     </div>
-                    <div v-if="searchLoading" class="search-hint">搜索中…</div>
+                    <div v-if="searchLoading" class="search-hint">正在找…</div>
                     <div v-else-if="searchRows.length === 0" class="note-empty">
-                        <p class="note-empty-title">没有找到「{{ searchKeyword.trim() }}」</p>
-                        <p class="note-empty-desc">换个关键词试试，标题和正文都会被搜索</p>
+                        <p class="note-empty-title">没找到「{{ searchKeyword.trim() }}」</p>
+                        <p class="note-empty-desc">换个词试试，标题和正文都会一起找</p>
                     </div>
                     <div
                         v-for="row in searchRows"
@@ -64,7 +79,7 @@
                         </p>
                         <span class="note-time">{{ formatTime(row.time) }}</span>
                         <span v-if="row.kind === 'sticky'" class="note-kind">便签</span>
-                        <span v-else class="note-kind note-kind-plain">{{ row.field === 'title' ? "标题命中" : "正文命中" }}</span>
+                        <span v-else class="note-kind note-kind-plain">{{ fieldLabel(row.field) }}</span>
                         <p v-if="row.field === 'content'" class="note-snippet">
                             <span v-if="row.snippet.prefix" class="snippet-edge">…</span>
                             <template v-for="(part,index) in highlightParts(row.snippet.text, searchKeyword)" :key="'s'+index">
@@ -75,7 +90,7 @@
                         </p>
                     </div>
                 </template>
-                <template v-else>
+                <template v-else-if="viewMode === 'list'">
                 <h2>所有笔记</h2><br>
                 <div class="tag-filter" v-if="tagOptions.length > 0">
                     <button
@@ -98,14 +113,14 @@
                     <div class="note-empty-icon">
                         <i class="icon-plus note-empty-img"></i>
                     </div>
-                    <p class="note-empty-title">还没有任何笔记</p>
-                    <p class="note-empty-desc">点击「新建笔记」开始记录点滴</p>
-                    <button class="note-empty-btn" @click="createNoteDialog">新建笔记</button>
+                    <p class="note-empty-title">还没有笔记</p>
+                    <p class="note-empty-desc">点一下「新建笔记」，从第一篇开始</p>
+                    <button class="note-empty-btn" @click="createNoteDialog">写第一篇</button>
                 </div>
                 <div v-else-if="filteredNotesData.length === 0" class="note-empty">
-                    <p class="note-empty-title">没有匹配「{{ activeTag }}」的笔记</p>
-                    <p class="note-empty-desc">换个标签看看，或取消筛选</p>
-                    <button class="note-empty-btn" @click="activeTag = ''">查看全部</button>
+                    <p class="note-empty-title">「{{ activeTag }}」下还没有笔记</p>
+                    <p class="note-empty-desc">换个标签，或者看看全部</p>
+                    <button class="note-empty-btn" @click="activeTag = ''">看全部</button>
                 </div>
                 <template v-else>
                 <div v-for="dateBlock in filteredNotesData" :key="dateBlock.dat">
@@ -143,6 +158,72 @@
                 </div>
                 </template>
                 </template>
+                <template v-else>
+                <div class="cal-wrap">
+                    <div class="cal-head">
+                        <h2 class="cal-title">我的日历</h2>
+                        <span class="cal-legend">
+                            <span class="cal-legend-text">少</span>
+                            <span v-for="level in 5" :key="level" class="cal-swatch" :class="'lv-' + (level - 1)"></span>
+                            <span class="cal-legend-text">多</span>
+                        </span>
+                    </div>
+                    <div class="cal-scroll" ref="calScroll">
+                        <div class="cal-grid">
+                            <div class="cal-month-row">
+                                <span class="cal-weekday cal-weekday-head">
+                                    <span class="cal-month-label">{{ calendarMonthRow.length ? "Months" : "" }}</span>
+                                </span>
+                                <div class="cal-month-track" :style="{ width: calTrackWidth() }">
+                                    <span
+                                        v-for="cell in calendarMonthRow"
+                                        :key="cell.key"
+                                        class="cal-month-cell"
+                                        :style="{ left: calMonthOffset(cell.index) }"
+                                    >{{ cell.label }}</span>
+                                </div>
+                            </div>
+                            <div class="cal-row" v-for="row in calendarRows" :key="'row-' + row.weekday">
+                                <span class="cal-weekday cal-weekday-sticky">{{ calendarWeekdayName(row.weekday) }}</span>
+                                <button
+                                    v-for="cell in row.cells"
+                                    :key="cell.date"
+                                    class="cal-cell"
+                                    :class="calCellClass(cell)"
+                                    :data-today="cell.date === todayIso ? '1' : null"
+                                    :disabled="!cell.selectable"
+                                    :title="calCellTitle(cell)"
+                                    @click="selectDate(cell)"
+                                ></button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cal-day-section" v-if="selectedDate">
+                        <div class="cal-day-head">
+                            <h4 class="cal-day-title">{{ selectedDate }}</h4>
+                            <span class="cal-day-count">{{ calendarDayItems.length }} 篇</span>
+                            <button class="cal-day-clear" title="取消选中" @click="selectedDate = ''">取消</button>
+                        </div>
+                        <div v-if="calendarDayItems.length === 0" class="note-empty">
+                            <p class="note-empty-title">这天没有记录</p>
+                            <p class="note-empty-desc">点上面颜色深一点的日子，就能看到当天写了什么</p>
+                        </div>
+                        <div v-else class="cal-day-list">
+                            <div
+                                class="note-box"
+                                :class="{ 'note-box-sticky': item.kind === 'sticky' }"
+                                v-for="item in calendarDayItems"
+                                :key="item.kind + '-' + item.time"
+                                @click="onItemClicked(item)"
+                            >
+                                <p class="note-title">{{ item.det.title }}</p>
+                                <span class="note-time">{{ item.det.createAt }}</span>
+                                <span v-if="item.kind === 'sticky'" class="note-kind">便签</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                </template>
             </div>
         </div>
         <el-dialog
@@ -151,7 +232,7 @@
             width="min(420px, 90vw)"
             @closed="resetCreateDialog"
         >
-            <span>创建一篇笔记</span>
+            <span>给这篇起个名字</span>
             <br><br>
             <el-input
                 v-model="newNoteTitle"
@@ -174,7 +255,7 @@
             width="min(420px, 90vw)"
             @closed="resetStickyDialog"
         >
-            <span>创建一张便签</span>
+            <span>给这张起个名字</span>
             <br><br>
             <el-input
                 v-model="newStickyTitle"
@@ -198,7 +279,7 @@
             width="min(420px, 90vw)"
             @closed="resetRenameDialog"
         >
-            <span>修改笔记标题</span>
+            <span>改成什么名字</span>
             <br><br>
             <el-input
                 v-model="renameTitle"
@@ -224,6 +305,11 @@ import { ElButton, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu, ElInput
 import emitter from "../utils/emitter"
 import NoteEditPage from "./NoteEditPage.vue"
 
+const CAL_CELL = 14
+const CAL_COL_GAP = 4
+const CAL_COL_STEP = CAL_CELL + CAL_COL_GAP
+const CAL_WEEKDAY_W = 46
+const CAL_WEEKDAY_NAMES = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
 function fmtDate(date) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
@@ -257,6 +343,8 @@ export default {
             searchLoading:false,
             searchTimer:null,
             searchId:0,
+            viewMode:"list",
+            selectedDate:"",
             importing:false,
             pinnedTags:[],
             tagColors:{}
@@ -290,6 +378,66 @@ export default {
             return this.notesData
                 .map(block=>({dat:block.dat,notes:block.notes.filter(note=>note.kind === 'note' && this.noteTags(note).some(tag=>tag.toLowerCase() === key))}))
                 .filter(block=>block.notes.length > 0)
+        },
+        dayCounts(){
+            const counts = {}
+            for(const block of this.notesData){
+                counts[block.dat] = (block.notes || []).length
+            }
+            return counts
+        },
+        calendarData(){
+            const counts = this.dayCounts
+            const today = new Date()
+            today.setHours(0,0,0,0)
+            const rangeStart = new Date(today.getTime() - 181 * 86400000)
+            const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+            const weeks = []
+            let cursor = new Date(rangeStart)
+            cursor.setDate(cursor.getDate() - ((cursor.getDay() + 6) % 7))
+            while(cursor.getTime() <= today.getTime()){
+                const week = []
+                for(let wd = 0; wd < 7; wd++){
+                    const iso = fmtDate(cursor)
+                    const inRange = cursor.getTime() >= rangeStart.getTime() && cursor.getTime() <= today.getTime()
+                    week.push({
+                        date:iso,
+                        inRange:inRange,
+                        future:cursor.getTime() > today.getTime(),
+                        selectable:inRange && cursor.getTime() <= today.getTime(),
+                        count:counts[iso] || 0
+                    })
+                    cursor.setDate(cursor.getDate() + 1)
+                }
+                weeks.push(week)
+            }
+            const monthRow = []
+            let lastMonth = ""
+            weeks.forEach((week,index)=>{
+                const month = week[0].date.slice(0,7)
+                const label = month === lastMonth ? "" : monthNames[Number(month.slice(5,7)) - 1]
+                lastMonth = month
+                monthRow.push({ key:week[0].date, label:label, index:index })
+            })
+            const rows = []
+            for(let i = 0; i < 7; i++){
+                rows.push({ weekday:i, cells:weeks.map(week=>week[i]) })
+            }
+            return { monthRow, rows }
+        },
+        todayIso(){
+            return fmtDate(new Date())
+        },
+        calendarMonthRow(){
+            return this.calendarData.monthRow
+        },
+        calendarRows(){
+            return this.calendarData.rows
+        },
+        calendarDayItems(){
+            if(!this.selectedDate) return []
+            const block = this.notesData.find(item=>item.dat === this.selectedDate)
+            return block ? block.notes : []
         }
     },
     methods: {
@@ -333,18 +481,32 @@ export default {
         },
         highlightParts(text,keyword){
             const source = String(text == null ? "" : text)
-            const needle = String(keyword == null ? "" : keyword).trim()
-            if(!needle) return [{ text:source, hit:false }]
+            const terms = String(keyword == null ? "" : keyword).trim().toLowerCase().split(/\s+/).filter(Boolean)
+            if(terms.length === 0) return [{ text:source, hit:false }]
             const lowerSource = source.toLowerCase()
-            const lowerNeedle = needle.toLowerCase()
+            const ranges = []
+            for(const term of terms){
+                let cursor = 0
+                let index = lowerSource.indexOf(term,cursor)
+                while(index !== -1){
+                    ranges.push([index,index + term.length])
+                    cursor = index + term.length
+                    index = lowerSource.indexOf(term,cursor)
+                }
+            }
+            ranges.sort((a,b)=>a[0] - b[0])
+            const merged = []
+            for(const range of ranges){
+                const last = merged[merged.length - 1]
+                if(last && range[0] <= last[1]) last[1] = Math.max(last[1],range[1])
+                else merged.push([range[0],range[1]])
+            }
             const parts = []
             let cursor = 0
-            let index = lowerSource.indexOf(lowerNeedle)
-            while(index !== -1){
-                if(index > cursor) parts.push({ text:source.slice(cursor,index), hit:false })
-                parts.push({ text:source.slice(index,index + needle.length), hit:true })
-                cursor = index + needle.length
-                index = lowerSource.indexOf(lowerNeedle,cursor)
+            for(const range of merged){
+                if(range[0] > cursor) parts.push({ text:source.slice(cursor,range[0]), hit:false })
+                parts.push({ text:source.slice(range[0],range[1]), hit:true })
+                cursor = range[1]
             }
             if(cursor < source.length) parts.push({ text:source.slice(cursor), hit:false })
             if(parts.length === 0) parts.push({ text:source, hit:false })
@@ -383,19 +545,78 @@ export default {
             this.searchKind = "all"
             this.searchLoading = false
         },
+        switchView(mode){
+            if(mode !== "list" && mode !== "calendar") return
+            if(this.viewMode === mode) return
+            this.viewMode = mode
+            if(mode === "calendar"){
+                this.clearSearch()
+                this.selectedDate = ""
+                this.$nextTick(()=>this.scrollToToday())
+            }
+        },
+        selectDate(cell){
+            if(!cell || !cell.selectable) return
+            this.selectedDate = this.selectedDate === cell.date ? "" : cell.date
+        },
+        calCellLevel(cell){
+            if(!cell.inRange || cell.future || cell.count === 0) return 0
+            if(cell.count <= 1) return 1
+            if(cell.count <= 3) return 2
+            if(cell.count <= 6) return 3
+            return 4
+        },
+        calCellClass(cell){
+            return "lv-" + this.calCellLevel(cell)
+        },
+        calCellTitle(cell){
+            if(!cell.inRange || cell.future) return cell.date
+            return cell.date + (cell.count > 0 ? " · " + cell.count + " notes" : "")
+        },
+        calendarWeekdayName(wd){
+            return CAL_WEEKDAY_NAMES[wd] || ""
+        },
+        calTrackWidth(){
+            return this.calendarMonthRow.length * CAL_COL_STEP + "px"
+        },
+        calMonthOffset(index){
+            return index * CAL_COL_STEP + "px"
+        },
+        scrollToToday(){
+            const wrap = this.$refs.calScroll
+            if(!wrap) return
+            const todayEl = wrap.querySelector('[data-today]')
+            if(!todayEl) return
+            const target = todayEl.offsetLeft + todayEl.offsetWidth - wrap.clientWidth
+            wrap.scrollLeft = Math.max(0, target)
+        },
         async onResultClicked(row){
             if(row.kind === 'sticky'){
-                window.electron.openSticky(row.time).catch(()=>ElMessage.error("便签窗口打开失败"))
+                window.electron.openSticky(row.time).catch(()=>ElMessage.error("这张便签没能打开"))
                 return
             }
             if(row.item){
                 this.onNoteClicked(row.item)
+                this.jumpToRow(row)
                 return
             }
             await this.getNoteList()
             const found = this.findItem('note',row.time)
-            if(found) this.onNoteClicked(found)
-            else ElMessage.error("该笔记已不存在")
+            if(found){
+                this.onNoteClicked(found)
+                this.jumpToRow(row)
+            }else ElMessage.error("这篇已经不在了")
+        },
+        jumpToRow(row){
+            const term = String(row.jumpTerm || '').trim()
+            if(term === '') return
+            // 点开的笔记是新挂进来的，监听要等它渲染完才在，早一步发就丢了
+            this.$nextTick(()=>emitter.emit('note-jump',{ tid:row.time, term:term }))
+        },
+        fieldLabel(field){
+            if(field === 'title') return "标题里有"
+            if(field === 'tag') return "标签里有"
+            return "正文里有"
         },
         async importNotes(mode){
             if(this.importing) return
@@ -406,11 +627,11 @@ export default {
                 const created = Array.isArray(result?.created) ? result.created.length : 0
                 const failed = Array.isArray(result?.failed) ? result.failed.length : 0
                 await this.getNoteList()
-                if(created > 0) ElMessage.success("成功导入 " + created + " 篇笔记")
-                if(failed > 0) ElMessage.warning(failed + " 个文件无法导入")
-                if(created === 0 && failed === 0) ElMessage.info("没有可导入的内容")
+                if(created > 0) ElMessage.success("已导入 " + created + " 篇笔记")
+                if(failed > 0) ElMessage.warning(failed + " 个文件没能导入")
+                if(created === 0 && failed === 0) ElMessage.info("没找到可以导入的内容")
             }catch(error){
-                ElMessage.error(typeof error === "string" ? error : "导入失败，请重试")
+                ElMessage.error(typeof error === "string" ? error : "没导进去，再试一次")
             }finally{
                 this.importing = false
             }
@@ -421,7 +642,7 @@ export default {
                 if(result?.canceled) return
                 ElMessage.success("已导出到 " + result.filePath)
             }catch{
-                ElMessage.error("导出失败，请重试")
+                ElMessage.error("没导出成功，再试一次")
             }
         },
         tagCount(tag){
@@ -439,39 +660,44 @@ export default {
                     stickyList = null
                 }
                 if(request !== this.listRequestId) return false
-                const groups = new Map()
-                const notes = [
-                    ...notesList.notes.map(item => ({...item,kind:'note'})),
-                    ...(Array.isArray(stickyList?.sticky) ? stickyList.sticky : []).map(item => ({...item,kind:'sticky'}))
-                ]
-                    .filter(item => item?.det && item.time != null)
-                    .sort((a,b) => Number(b.time) - Number(a.time))
-                notes.forEach(item => {
-                    const date = fmtDate(new Date(item.time))
-                    if(!groups.has(date)) groups.set(date, [])
-                    groups.get(date).push(item)
-                })
-                this.notesData = [...groups.entries()]
-                    .sort((a,b) => b[0].localeCompare(a[0]))
-                    .map(([dat,notes]) => ({dat,notes}))
-                const tags = Array.isArray(notesList.tags)
-                    ? notesList.tags.filter(item=>typeof item === "string" && item.trim().length > 0)
-                    : []
-                this.allTags = tags
-                if(this.activeTag !== "" && !tags.some(item=>item.toLowerCase() === this.activeTag.toLowerCase())){
-                    this.activeTag = ""
-                }
-                emitter.emit('notes-list-updated', this.notesData)
+                this.applyNoteList(notesList, stickyList)
                 return true
             } catch {
-                if(request === this.listRequestId) {
-                    this.notesData = []
-                    this.allTags = []
-                    this.activeTag = ""
-                    emitter.emit('notes-list-updated', this.notesData)
-                }
-                return request === this.listRequestId
+                if(request !== this.listRequestId) return false
+                this.notesData = []
+                this.allTags = []
+                this.activeTag = ""
+                emitter.emit('notes-list-updated', this.notesData)
+                return true
             }
+        },
+        applyNoteList(notesList, stickyList){
+            this.notesData = [...this.groupNotes(notesList, stickyList).entries()]
+                .sort((a,b) => b[0].localeCompare(a[0]))
+                .map(([dat,notes]) => ({dat,notes}))
+            const tags = Array.isArray(notesList.tags)
+                ? notesList.tags.filter(item=>typeof item === "string" && item.trim().length > 0)
+                : []
+            this.allTags = tags
+            if(this.activeTag !== "" && !tags.some(item=>item.toLowerCase() === this.activeTag.toLowerCase())){
+                this.activeTag = ""
+            }
+            emitter.emit('notes-list-updated', this.notesData)
+        },
+        groupNotes(notesList, stickyList){
+            const notes = [
+                ...notesList.notes.map(item => ({...item,kind:'note'})),
+                ...(Array.isArray(stickyList?.sticky) ? stickyList.sticky : []).map(item => ({...item,kind:'sticky'}))
+            ]
+                .filter(item => item?.det && item.time != null)
+                .sort((a,b) => Number(b.time) - Number(a.time))
+            const groups = new Map()
+            notes.forEach(item => {
+                const date = fmtDate(new Date(item.time))
+                if(!groups.has(date)) groups.set(date, [])
+                groups.get(date).push(item)
+            })
+            return groups
         },
         onNoteClicked(note) {
             emitter.emit('add-tab', {
@@ -484,7 +710,7 @@ export default {
         onItemClicked(item) {
             if(item.kind === 'sticky'){
                 window.electron.openSticky(item.time).catch(()=>{
-                    ElMessage.error("便签窗口打开失败")
+                    ElMessage.error("这张便签没能打开")
                 })
                 return
             }
@@ -503,7 +729,7 @@ export default {
             if(this.creating) return
             const title = typeof this.newNoteTitle === "string" ? this.newNoteTitle.trim() : ""
             if(!title){
-                this.createError = "笔记标题不能为空"
+                this.createError = "名字不能空着"
                 return
             }
             this.creating = true
@@ -514,7 +740,7 @@ export default {
                 await this.getNoteList()
                 if(note?.det) this.onNoteClicked(note)
             }catch{
-                this.createError = "创建失败，请重试"
+                this.createError = "没建成，再点一次试试"
             }finally{
                 this.creating = false
             }
@@ -538,6 +764,9 @@ export default {
                 this.deletingNoteTime = null
                 return
             }
+            await this.doDeleteItem(item, isSticky)
+        },
+        async doDeleteItem(item, isSticky){
             try{
                 if(isSticky){
                     await window.electron.deleteSticky(item.time)
@@ -546,7 +775,7 @@ export default {
                     emitter.emit("note-deleted", item.time)
                 }
                 await this.getNoteList()
-                ElMessage.success(isSticky ? "便签已移入回收站" : "笔记已移入回收站")
+                ElMessage.success(isSticky ? "已移到回收站" : "已移到回收站")
             }catch{
                 ElMessage.error("删除失败，请重试")
             }finally{
@@ -579,7 +808,7 @@ export default {
             if(this.renaming || !this.renameTarget) return
             const title = typeof this.renameTitle === "string" ? this.renameTitle.trim() : ""
             if(!title){
-                this.renameError = "笔记标题不能为空"
+                this.renameError = "名字不能空着"
                 return
             }
             this.renaming = true
@@ -589,7 +818,7 @@ export default {
                 this.resetRenameDialog()
                 await this.getNoteList()
                 if(result?.time != null) emitter.emit("note-renamed",{tid:result.time,title:result.title})
-                ElMessage.success("重命名成功")
+                ElMessage.success("改好啦")
             }catch{
                 this.renameError = "重命名失败，请重试"
             }finally{
@@ -620,7 +849,7 @@ export default {
                 await this.getNoteList()
                 if(sticky?.time != null) window.electron.openSticky(sticky.time)
             }catch{
-                this.stickyError = "创建失败，请重试"
+                this.stickyError = "没建成，再点一次试试"
             }finally{
                 this.creatingSticky = false
             }
@@ -1051,6 +1280,220 @@ export default {
     display: flex;
     justify-content: flex-end;
     gap: 10px;
+}
+.list-mode-toggle{
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+.list-mode-btn{
+    height: 28px;
+    padding: 0 16px;
+    font-size: 12px;
+    color: var(--text-2);
+    background: var(--block-1);
+    border: 1px solid var(--border-1);
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s var(--ease), color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.list-mode-btn:hover{
+    color: var(--accent-strong);
+    border-color: var(--accent-border);
+    background: var(--accent-soft);
+}
+.list-mode-btn.active{
+    color: var(--on-accent);
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+}
+.cal-wrap{
+    --cal-weekday-w: 46px;
+    --cal-cell: 14px;
+    --cal-gap: 4px;
+    min-width: 0;
+}
+.cal-head{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.cal-title{
+    font-size: 20px;
+}
+.cal-legend{
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+}
+.cal-legend-text{
+    font-size: 11px;
+    color: var(--text-2);
+}
+.cal-swatch{
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+}
+.cal-swatch.lv-0{ background: var(--cal-0); }
+.cal-swatch.lv-1{ background: var(--cal-1); }
+.cal-swatch.lv-2{ background: var(--cal-2); }
+.cal-swatch.lv-3{ background: var(--cal-3); }
+.cal-swatch.lv-4{ background: var(--cal-4); }
+.cal-scroll{
+    overflow-x: auto;
+    margin-bottom: 18px;
+    padding-bottom: 6px;
+}
+.cal-grid{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: max-content;
+}
+.cal-month-row{
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: flex;
+    gap: 4px;
+    padding: 2px 0 4px;
+    background: var(--bg-1);
+}
+.cal-weekday-head{
+    width: var(--cal-weekday-w);
+    flex-shrink: 0;
+    font-size: 11px;
+    text-align: left;
+    color: var(--text-2);
+}
+.cal-month-label{
+    display: block;
+    font-size: 10px;
+    line-height: 16px;
+    color: var(--text-3, var(--text-2));
+    opacity: 0.75;
+}
+.cal-month-track{
+    position: relative;
+    flex-shrink: 0;
+    height: 16px;
+}
+.cal-month-cell{
+    position: absolute;
+    top: 0;
+    white-space: nowrap;
+    font-size: 11px;
+    line-height: 16px;
+    font-family: var(--font-en);
+    color: var(--text-2);
+    pointer-events: none;
+}
+.cal-month-cell:empty{
+    display: none;
+}
+.cal-row{
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.cal-weekday{
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    width: var(--cal-weekday-w);
+    flex-shrink: 0;
+    font-size: 11px;
+    font-family: var(--font-en);
+    text-align: left;
+    color: var(--text-2);
+    background: var(--bg-1);
+}
+.cal-weekday-head{
+    position: sticky;
+    left: 0;
+    z-index: 4;
+    background: var(--bg-1);
+}
+.cal-cell{
+    position: relative;
+    box-sizing: border-box;
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: 1px solid var(--border-1);
+    border-radius: 3px;
+    background: var(--cal-0);
+    cursor: pointer;
+    transition: transform 0.1s var(--ease), border-color 0.15s var(--ease);
+}
+.cal-cell.lv-1{ background: var(--cal-1); border-color: transparent; }
+.cal-cell.lv-2{ background: var(--cal-2); border-color: transparent; }
+.cal-cell.lv-3{ background: var(--cal-3); border-color: transparent; }
+.cal-cell.lv-4{ background: var(--cal-4); border-color: transparent; }
+.cal-cell:disabled{
+    cursor: default;
+    opacity: 0.45;
+}
+.cal-cell:not(:disabled):hover{
+    transform: scale(1.4);
+    border-color: var(--accent-border);
+    z-index: 2;
+}
+.cal-day-section{
+    margin-top: 8px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-1);
+}
+.cal-day-head{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.cal-day-title{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-2);
+    font-family: var(--font-en);
+}
+.cal-day-title::before{
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent-strong);
+}
+.cal-day-count{
+    font-size: 12px;
+    color: var(--text-2);
+    font-family: var(--font-en);
+}
+.cal-day-clear{
+    margin-left: auto;
+    height: 26px;
+    padding: 0 12px;
+    font-size: 12px;
+    color: var(--text-2);
+    background: transparent;
+    border: 1px solid var(--border-1);
+    border-radius: var(--radius-1);
+    cursor: pointer;
+    transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.cal-day-clear:hover{
+    color: var(--accent-strong);
+    border-color: var(--accent-border);
+}
+.cal-day-list{
+    display: flex;
+    flex-direction: column;
 }
 @media (max-width: 560px){
     #note-panel{

@@ -6,6 +6,14 @@ const { getRootDir } = require("./configInit")
 
 const NOTE_EXT = [".md",".markdown",".txt"]
 const BACKUP_ITEMS = ["config.json","notes","labels","graph.json"]
+// 与 src/utils/noteLink.js 的 MARKDOWN_LINK 同源：导出的 .md 不保留「关联笔记」功能，只留标题纯文本
+const NOTE_LINK_MD = /\[([^\]\n]*)\]\(\s*dnote:note\/[^)\s]*\s*\)/g
+
+function stripNoteLinks(text){
+    const value = String(text == null ? "" : text)
+    if(value === "") return value
+    return value.replace(NOTE_LINK_MD,"$1")
+}
 
 function sanitizeFileName(title){
     const cleaned = String(title == null ? "" : title)
@@ -83,7 +91,7 @@ async function exportNote(tid,dialog,defaultDir){
         filters:[{ name:"Markdown 文件", extensions:["md"] }]
     })
     if(result.canceled || !result.filePath) return { canceled:true }
-    fs.writeFileSync(result.filePath,content,"utf-8")
+    fs.writeFileSync(result.filePath,stripNoteLinks(content),"utf-8")
     return { canceled:false, filePath:result.filePath }
 }
 async function exportSticky(tid,dialog,defaultDir){
@@ -105,14 +113,26 @@ async function backupData(dialog){
     })
     if(picked.canceled || picked.filePaths.length === 0) return { canceled:true }
     const target = path.join(picked.filePaths[0],"desktop-notebook-backup-"+timeLabel())
-    fs.mkdirSync(target,{recursive:true})
+    // 备份目录不能选在数据目录里面：往 notes/ 里再复制一份 notes/ 会越拷越大
+    const insideRoot = (()=>{
+        const rel = path.relative(root,target)
+        return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)
+    })()
+    if(insideRoot) throw new Error("备份位置不能放在数据目录里，换个文件夹再试")
     const items = []
-    BACKUP_ITEMS.forEach(name=>{
-        const source = path.join(root,name)
-        if(!fs.existsSync(source)) return
-        fs.cpSync(source,path.join(target,name),{ recursive:true })
-        items.push(name)
-    })
+    try{
+        fs.mkdirSync(target,{recursive:true})
+        BACKUP_ITEMS.forEach(name=>{
+            const source = path.join(root,name)
+            if(!fs.existsSync(source)) return
+            fs.cpSync(source,path.join(target,name),{ recursive:true })
+            items.push(name)
+        })
+    }catch(error){
+        // 半份备份比没有更害人，失败就把残缺的目录清掉
+        try{ fs.rmSync(target,{ recursive:true, force:true }) }catch{}
+        throw error
+    }
     return { canceled:false, dir:target, items:items }
 }
 module.exports = {
@@ -121,5 +141,6 @@ module.exports = {
     exportNote:exportNote,
     exportSticky:exportSticky,
     backupData:backupData,
-    sanitizeFileName:sanitizeFileName
+    sanitizeFileName:sanitizeFileName,
+    stripNoteLinks:stripNoteLinks
 }

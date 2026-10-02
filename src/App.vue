@@ -1,5 +1,7 @@
 <script setup>
 import SideBar from './components/SideBar.vue';
+import QuickOpen from './components/QuickOpen.vue';
+import CommandPalette from './components/CommandPalette.vue';
 import { watchTheme } from './utils/theme.js';
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
@@ -21,7 +23,9 @@ const isSticky = computed(() => route.path.startsWith('/sticky/'));
         </keep-alive>
       </router-view>
     </div>
-    <button v-if="uiState.focus" class="focus-exit" title="退出专注模式" @click="uiState.focus = false">
+    <QuickOpen></QuickOpen>
+    <CommandPalette></CommandPalette>
+    <button v-if="uiState.focus" class="focus-exit" title="回到普通视图" @click="uiState.focus = false">
       退出专注
     </button>
   </template>

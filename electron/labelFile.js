@@ -5,15 +5,31 @@ let dataDir = ""
 let labelsDir = ""
 let listPath = ""
 let trashDir = ""
-let watchCallback = null
+const watchCallbacks = new Set()   // 托盘与 IPC 各注册一份，单槽会被后注册的覆盖掉
 let listWatched = false
 let listTimer = null
 
+const LOCK_CODES = new Set(["EPERM","EBUSY","EACCES"])
+function retryRename(from,to){
+    // Windows 上刚被读取/显示的文件 renameSync 会瞬时 EPERM/EBUSY，稍等重试
+    let attempts = 0
+    for(;;){
+        try{
+            fs.renameSync(from,to)
+            return
+        }catch(error){
+            if(!LOCK_CODES.has(error && error.code)) throw error
+            attempts++
+            if(attempts > 8) throw error
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,40)
+        }
+    }
+}
 function writeAtomic(file,content){
     const tempPath = file+".tmp-"+process.pid+"-"+Date.now()
     try{
         fs.writeFileSync(tempPath,content,"utf-8")
-        fs.renameSync(tempPath,file)
+        retryRename(tempPath,file)
     }catch(error){
         try{fs.unlinkSync(tempPath)}catch{}
         throw error
@@ -28,29 +44,57 @@ function label_init(root=process.cwd()){
     listPath = path.join(labelsDir,"list.json")
     trashDir = path.join(labelsDir,".trash")
     if(!fs.existsSync(listPath)){
+        // 索引不见了但便签文件还在时绝不能播种空列表：下一次保存会把条目全冲掉
+        if(labelsDirHasData()) throw new Error("labels/list.json 不见了，但 labels/ 里还有便签文件；先别启动，把索引找回来再用")
         fs.writeFileSync(listPath,"{\"sticky\":[],\"trash\":[]}")
     }
     label_list = readLabelList()
+}
+// labels/ 里除索引自己以外还有东西，就说明索引本该存在
+function labelsDirHasData(){
+    try{
+        return fs.readdirSync(labelsDir).some(name=>name !== ".trash" && name !== "list.json" && !name.startsWith("list.json."))
+    }catch{
+        return false
+    }
 }
 function readLabelList(){
     if(!fs.existsSync(labelsDir)){
         fs.mkdirSync(labelsDir,{recursive:true})
     }
-    if(!fs.existsSync(listPath)){
-        fs.writeFileSync(listPath,"{\"sticky\":[],\"trash\":[]}")
+    // 读的时候不建索引文件：只是暂时没读到就写一份空的，下一次保存会把所有便签条目冲掉
+    let raw = null
+    try{
+        raw = fs.readFileSync(listPath,"utf-8")
+    }catch(error){
+        // 只有「文件不存在且没有别的便签」才算空列表；读失败或索引丢了都要报出去，
+        // 当成空的下一次保存就把整份索引冲掉了
+        if(!error || error.code !== "ENOENT") throw error
+        if(labelsDirHasData()) throw new Error("labels/list.json 不见了，但 labels/ 里还有便签文件；把索引找回来再用")
     }
     let data = null
     try{
-        data = JSON.parse(fs.readFileSync(listPath,"utf-8"))
+        data = raw != null ? JSON.parse(raw) : null
     }catch(error){
+        // 可能是外部程序正在写，读到半截字节：再读一次，字节变了就抛出去让调用方重试，
+        // 不能当成损坏重建空列表（那会把真实索引顶掉）
+        let again = null
+        try{
+            again = fs.readFileSync(listPath,"utf-8")
+        }catch{}
+        if(again !== raw) throw new Error("labels/list.json 正在被写入，稍后再试")
         data = null
     }
     if(data == null || typeof data !== "object" || !Array.isArray(data.sticky)){
         try{
             if(fs.existsSync(listPath)){
-                const backup = listPath + ".broken-" + Date.now()
-                fs.copyFileSync(listPath,backup)
-                console.warn("[labelFile] labels/list.json 解析失败，已备份为 " + path.basename(backup) + " 并重建空列表")
+                const dir = path.dirname(listPath), base = path.basename(listPath)
+                // 一直读不出来时只备一次，别每次读都复制一份堆满目录
+                if(!fs.readdirSync(dir).some(name=>name.startsWith(base+".broken-"))){
+                    const backup = listPath + ".broken-" + Date.now()
+                    fs.copyFileSync(listPath,backup)
+                    console.warn("[labelFile] labels/list.json 解析失败，已备份为 " + path.basename(backup) + " 并重建空列表")
+                }
             }
         }catch(error){}
         data = { sticky:[], trash:[] }
@@ -113,13 +157,23 @@ function normalizeTitle(title){
 function randomSuffix(){
     return Math.random().toString(36).slice(2,8)
 }
+// time 会拼进回收站目录名，索引被改坏时 ".." 能把删除操作带出数据目录
+function timeKey(t){
+    const key = String(t)
+    if(!/^[0-9A-Za-z_-]+$/.test(key)) throw new Error("invalid sticky id")
+    return key
+}
 function createSticky(title){
     if(label_list == null){
         throw new Error("sticky list is not init")
     }
     const value = normalizeTitle(title)
     label_list = readLabelList()
-    const t = new Date().getTime()
+    // 同一毫秒建两张会撞同一个 time，存的时候会互相覆盖
+    const taken = time=>label_list.sticky.some(item=>String(item.time)===String(time))
+        || label_list.trash.some(item=>String(item.time)===String(time))
+    let t = new Date().getTime()
+    while(taken(t)) t++
     const file = path.join(labelsDir,String(t)+"-"+randomSuffix()+".txt")
     writeAtomic(file,"")
     const det = {
@@ -153,8 +207,9 @@ function readSticky(t){
     let content = ""
     try{
         content = fs.readFileSync(getStickyFile(entry),{ encoding:'utf-8' })
-    }catch{
-        content = ""
+    }catch(error){
+        // 文件被删掉才算空的；读失败不能假装没内容，免得又存一次把原文冲掉
+        if(!error || error.code !== "ENOENT") throw error
     }
     return { time:entry.time, title:entry.det?.title || "便签", content:content }
 }
@@ -167,7 +222,7 @@ function saveSticky(data){
 }
 function moveFile(from,to){
     try{
-        fs.renameSync(from,to)
+        retryRename(from,to)
     }catch(error){
         if(error && error.code === "EXDEV"){
             fs.copyFileSync(from,to)
@@ -186,7 +241,8 @@ function deleteSticky(t){
     if(index === -1) throw new Error("sticky is not found")
     const entry = label_list.sticky[index]
     const file = getStickyFile(entry)
-    const targetDir = path.join(trashDir,String(entry.time))
+    if(!fs.existsSync(file)) throw new Error("sticky files are missing")
+    const targetDir = path.join(trashDir,timeKey(entry.time))
     fs.mkdirSync(targetDir,{recursive:true})
     moveFile(file,path.join(targetDir,path.basename(file)))
     label_list.sticky.splice(index,1)
@@ -196,7 +252,17 @@ function deleteSticky(t){
         det:entry.det,
         deletedAt:Date.now()
     })
-    writeList()
+    try{
+        writeList()
+    }catch(error){
+        // 索引没写成要搬回去，不然文件躺在回收站、索引还当它在用
+        try{
+            moveFile(path.join(targetDir,path.basename(file)),file)
+            label_list.trash.pop()
+            label_list.sticky.splice(index,0,entry)
+        }catch{}
+        throw error
+    }
     return "success"
 }
 function getTrash(){
@@ -231,8 +297,9 @@ function restoreSticky(t){
     if(index === -1) throw new Error("trash item is not found")
     const entry = label_list.trash[index]
     const file = getStickyFile(entry)
+    if(!fs.existsSync(file)) throw new Error("trash item files are missing")
     let fileName = path.basename(file)
-    if(fs.existsSync(path.join(labelsDir,fileName))) fileName = String(entry.time)+"-"+randomSuffix()+".txt"
+    if(fs.existsSync(path.join(labelsDir,fileName))) fileName = timeKey(entry.time)+"-"+randomSuffix()+".txt"
     const finalTarget = path.join(labelsDir,fileName)
     moveFile(file,finalTarget)
     label_list.sticky.push({
@@ -241,7 +308,17 @@ function restoreSticky(t){
         det:entry.det
     })
     label_list.trash.splice(index,1)
-    writeList()
+    try{
+        writeList()
+    }catch(error){
+        // 索引没写成要搬回回收站，不然文件在 labels/ 里、索引还当它在回收站
+        try{
+            moveFile(finalTarget,file)
+            label_list.sticky.pop()
+            label_list.trash.splice(index,0,entry)
+        }catch{}
+        throw error
+    }
     return { time:entry.time, title:entry.det && entry.det.title }
 }
 function purgeSticky(t){
@@ -254,7 +331,11 @@ function purgeSticky(t){
     const entry = label_list.trash[index]
     let file = ""
     try{
-        file = getStickyFile(entry)
+        const found = getStickyFile(entry)
+        // 只删这条回收站条目自己的目录（.trash/<时间>/）：路径异常时宁可不删
+        const dir = path.dirname(found)
+        const rel = path.relative(labelsDir,dir)
+        if(rel.split(path.sep).length >= 2 && !rel.startsWith("..") && !path.isAbsolute(rel)) file = found
     }catch{}
     label_list.trash.splice(index,1)
     writeList()
@@ -281,14 +362,16 @@ function watchSticky(callback){
     if(label_list == null){
         throw new Error("sticky list is not init")
     }
-    watchCallback = callback
+    watchCallbacks.add(callback)
     if(listWatched) return
     fs.watchFile(listPath,{persistent:true,interval:200},()=>{
         clearTimeout(listTimer)
         listTimer = setTimeout(()=>{
             try{
                 label_list = readLabelList()
-                watchCallback({sticky:true})
+                watchCallbacks.forEach(notify=>{
+                    try{ notify({sticky:true}) }catch{}
+                })
             }catch{}
         },100)
     })

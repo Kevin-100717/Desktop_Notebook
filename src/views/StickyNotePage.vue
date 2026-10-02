@@ -37,9 +37,9 @@ export default {
     },
     computed:{
         stateText(){
-            if(this.state === 'saved') return '已保存'
-            if(this.state === 'saving') return '保存中'
-            if(this.state === 'error') return '保存失败'
+            if(this.state === 'saved') return '存好了'
+            if(this.state === 'saving') return '存一下'
+            if(this.state === 'error') return '没存上'
             return ''
         }
     },
@@ -79,7 +79,7 @@ export default {
             this.savedText = this.text
             this.loaded = true
         }catch{
-            this.loaded = true
+            this.loaded = false      // 没读到内容就不开保存，免得拿空的盖掉原来的便签
         }
     },
     beforeUnmount(){

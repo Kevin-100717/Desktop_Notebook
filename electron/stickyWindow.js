@@ -1,5 +1,6 @@
 const { app, BrowserWindow } = require("electron")
 const path = require("path")
+const { pathToFileURL } = require("url")
 const { registerWindow } = require("./ipcHandler")
 
 const stickyWindows = new Map()
@@ -55,6 +56,16 @@ function openStickyWindow(tid){
     })
     stickyWindows.set(key,win)
     registerWindow(win)
+    // 与主窗口同款守卫：便签页只允许站内路由，禁止外链、target=_blank 和脚本导航
+    const entryFile = pathToFileURL(path.join(__dirname,"../dist/index.html")).toString()
+    win.webContents.setWindowOpenHandler(()=>({ action:'deny' }))
+    win.webContents.on('will-navigate',(event,url)=>{
+        const target = String(url == null ? "" : url)
+        const isAppPage = target.startsWith("http://localhost:5173")
+            || target === entryFile
+            || target.startsWith(entryFile + "#")
+        if(!isAppPage) event.preventDefault()
+    })
     const index = stickyWindows.size % 6
     win.setPosition(140 + index*30,110 + index*30)
     win.setAlwaysOnTop(true,"floating")

@@ -54,6 +54,9 @@ const CONFIG_SCHEMA = [
     { key:"userKey", normalize:value=>typeof value === "string" ? value : "" },
     { key:"createTime", normalize:value=>Number.isFinite(value) && value > 0 ? value : Date.now() },
     { key:"theme", normalize:value=>value === "light" || value === "dark" ? value : "dark" },
+    { key:"accentColor", normalize:value=>normalizeAccent(value) },
+    { key:"customCss", normalize:value=>normalizeCustomCss(value) },
+    { key:"customColors", normalize:value=>normalizeCustomColors(value) },
     { key:"closeToTray", normalize:value=>typeof value === "boolean" ? value : true },
     { key:"shortcuts", normalize:value=>normalizeShortcuts(value) },
     { key:"tagColors", normalize:value=>normalizeTagColors(value) },
@@ -61,7 +64,39 @@ const CONFIG_SCHEMA = [
 ]
 const SCHEMA_KEYS = CONFIG_SCHEMA.map(field=>field.key)
 const COLOR_POOL = ["#e5484d","#f76808","#ffb224","#46a758","#12a594","#0090ff","#8e4ec6","#e93d82"]
+const CUSTOM_CSS_LIMIT = 20000
 
+// 主题色只收 3 位或 6 位十六进制，写错了就退回默认色。
+function normalizeAccent(value){
+    if(typeof value !== "string") return ""
+    const hex = value.trim()
+    if(!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) return ""
+    return hex.toLowerCase()
+}
+// 自己写的样式只做纯文本限制和长度限制，不解析语法，出错也不至于影响别的设置。
+function normalizeCustomCss(value){
+    if(typeof value !== "string") return ""
+    let text = value
+    // 去掉 <style> 包裹，省得有人直接把整段标签贴进来
+    text = text.replace(/<\/?style[^>]*>/gi,"")
+    if(text.length > CUSTOM_CSS_LIMIT) text = text.slice(0,CUSTOM_CSS_LIMIT)
+    return text.replace(/\r\n/g,"\n")
+}
+
+// 配色只认这几个部位，用户挑颜色就行，不用自己写代码。
+const COLOR_PARTS = ["page","panel","card","text","textSoft","line","accent","danger","sticky"]
+function normalizeCustomColors(value){
+    const result = {}
+    if(!value || typeof value !== "object" || Array.isArray(value)) return result
+    COLOR_PARTS.forEach(part=>{
+        const color = value[part]
+        if(typeof color !== "string") return
+        const hex = color.trim()
+        if(!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) return
+        result[part] = hex.toLowerCase()
+    })
+    return result
+}
 function normalizeTagColors(value){
     const result = {}
     if(!value || typeof value !== "object" || Array.isArray(value)) return result
@@ -170,9 +205,15 @@ function setSetting(setting){
         setConfig("shortcuts",shortcuts)
         return
     }
-    if(key === "tagColors") setConfig("tagColors",normalizeTagColors(value))
+    if(key === "customColors") setConfig("customColors",normalizeCustomColors(value))
+    else if(key === "tagColors") setConfig("tagColors",normalizeTagColors(value))
     else if(key === "pinnedTags") setConfig("pinnedTags",normalizePinnedTags(value))
-    else setConfig(key,value)
+    else{
+        // 其余设置也走 schema 校验归一化，非法值（比如主题写成 "blue"）退回默认而不是原样落盘
+        const field = CONFIG_SCHEMA.find(item=>item.key === key)
+        if(field == null) throw new Error("invalid setting")
+        setConfig(key,field.normalize(value))
+    }
 }
 function setConfig(key,value){
     if(config == null){
@@ -212,10 +253,13 @@ module.exports = {
     getConfigAll:()=>Object.assign({},config),
     getRootDir:getRootDir,
     getInitReport:()=>Object.assign({},initReport),
+    hasSettingKey:key=>SCHEMA_KEYS.includes(key),
     isValidAccelerator:isValidAccelerator,
     describeAccelerator:describeAccelerator,
     normalizeTagColors:normalizeTagColors,
     normalizePinnedTags:normalizePinnedTags,
+    normalizeCustomColors:normalizeCustomColors,
+    COLOR_PARTS:COLOR_PARTS,
     COLOR_POOL:COLOR_POOL,
     DEFAULT_SHORTCUTS:DEFAULT_SHORTCUTS,
     CONFIG_VERSION:CONFIG_VERSION

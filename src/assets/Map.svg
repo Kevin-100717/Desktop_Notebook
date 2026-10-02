@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <path fill="currentColor" d="M336 96h352a112 112 0 0 1 112 112v608a112 112 0 0 1-112 112H336a112 112 0 0 1-112-112V208A112 112 0 0 1 336 96m0 72a40 40 0 0 0-40 40v608a40 40 0 0 0 40 40h352a40 40 0 0 0 40-40V208a40 40 0 0 0-40-40z"/>
+  <rect fill="currentColor" x="348" y="196" width="96" height="18" rx="9"/>
+  <rect fill="currentColor" x="348" y="256" width="232" height="18" rx="9"/>
+  <rect fill="currentColor" x="348" y="316" width="176" height="18" rx="9"/>
+  <rect fill="currentColor" x="348" y="436" width="264" height="18" rx="9"/>
+  <rect fill="currentColor" x="348" y="496" width="144" height="18" rx="9"/>
+  <rect fill="currentColor" x="348" y="556" width="212" height="18" rx="9"/>
+  <rect fill="currentColor" x="348" y="616" width="96" height="18" rx="9"/>
+  <rect fill="currentColor" x="348" y="676" width="248" height="18" rx="9"/>
+  <rect fill="currentColor" x="348" y="736" width="168" height="18" rx="9"/>
+  <path fill="currentColor" d="M284 436h296a24 24 0 0 1 24 24v144a24 24 0 0 1-24 24H284a24 24 0 0 1-24-24V460a24 24 0 0 1 24-24m0 56v120h296V492z"/>
+</svg>

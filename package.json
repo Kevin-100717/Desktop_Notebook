@@ -1,7 +1,7 @@
 {
   "name": "desktop-notebook",
   "private": true,
-  "version": "1.5.1",
+  "version": "1.5.2",
   "type": "commonjs",
   "main": "electron/main.js",
   "scripts": {
@@ -13,22 +13,22 @@
     "electron:build": "vite build && electron-builder"
   },
   "dependencies": {
-    "axios": "^1.20.0",
+    "pinyin-match": "^1.2.10"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
     "element-plus": "^2.14.6",
+    "electron": "41.0.3",
+    "electron-builder": "^26.15.3",
     "less": "^4.9.1",
     "mitt": "^3.0.1",
     "nodemon": "^3.1.14",
     "npm-run-all": "^4.1.5",
+    "unplugin-element-plus": "^0.11.2",
+    "vite": "^8.3.0",
     "vditor": "^4.0.0",
     "vue": "^3.5.42",
     "vue-router": "^5.3.1"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-vue": "^6.0.8",
-    "electron": "41.0.3",
-    "electron-builder": "^26.15.3",
-    "unplugin-element-plus": "^0.11.2",
-    "vite": "^8.3.0"
   },
   "build": {
     "productName": "desktop-notebook",
@@ -48,10 +48,10 @@
       "deleteAppDataOnUninstall": false
     },
     "mac": {
-      "category": "your.app.category.type"
+      "category": "public.app-category.productivity"
     },
     "win": {
-      "icon": "./electron/log.ico",
+      "icon": "./build/icon.ico",
       "target": [
         {
           "target": "nsis",

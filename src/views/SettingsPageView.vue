@@ -6,8 +6,8 @@
             </div>
             <div class="setting-item">
                 <div class="setting-info">
-                    <p class="setting-name">软件主题</p>
-                    <p class="setting-desc">选择界面配色，切换后立即生效</p>
+                    <p class="setting-name">深浅底色</p>
+                    <p class="setting-desc">看久了眼睛舒服一点，白天黑夜随你挑</p>
                 </div>
                 <div class="setting-options">
                     <button
@@ -30,15 +30,141 @@
             </div>
             <div class="setting-item">
                 <div class="setting-info">
-                    <p class="setting-name">关闭主窗口时</p>
-                    <p class="setting-desc">开启后关闭窗口会最小化到系统托盘，托盘菜单可直接新建笔记与便签；关闭则直接退出程序</p>
+                    <p class="setting-name">主题色</p>
+                    <p class="setting-desc">按钮和高亮都用这个颜色，不喜欢就挑一个别的</p>
+                </div>
+                <div class="setting-options accent-options">
+                    <button
+                        class="accent-swatch default"
+                        :class="{ active: accent === '' }"
+                        title="用默认的黄"
+                        :disabled="saving"
+                        @click="changeAccent('')"
+                    ></button>
+                    <button
+                        v-for="color in accentPalette"
+                        :key="color"
+                        class="accent-swatch"
+                        :class="{ active: accent === color }"
+                        :style="{ background: color }"
+                        :title="color"
+                        :disabled="saving"
+                        @click="changeAccent(color)"
+                    ></button>
+                    <el-color-picker
+                        v-model="accentDraft"
+                        size="small"
+                        :predefine="accentPalette"
+                        @change="changeAccent(accentDraft)"
+                    ></el-color-picker>
+                </div>
+            </div>
+            <div class="setting-item setting-item-block">
+                <div class="setting-info">
+                    <p class="setting-name">自己配色</p>
+                    <p class="setting-desc">挑几处颜色就能改，不用写代码；不想要的地方留空就是原来的样子</p>
+                </div>
+                <div class="color-board">
+                    <div class="color-main">
+                        <div class="color-grid">
+                            <div
+                                class="color-row"
+                                v-for="group in colorGroups"
+                                :key="group.part"
+                                :data-pick="group.part"
+                            >
+                                <span class="color-label">{{ group.label }}</span>
+                                <div class="color-control">
+                                    <button
+                                        class="color-chip"
+                                        :class="{ on: colorDraft[group.part] }"
+                                        :style="colorDraft[group.part] ? { background: colorDraft[group.part] } : {}"
+                                        :title="colorDraft[group.part] || '用默认'"
+                                        @click="pickColor(group.part)"
+                                    >
+                                        <span v-if="!colorDraft[group.part]" class="chip-empty">默认</span>
+                                    </button>
+                                    <el-color-picker
+                                        :model-value="colorDraft[group.part] || ''"
+                                        size="small"
+                                        :predefine="accentPalette"
+                                        @change="value => changeColor(group.part, value)"
+                                    ></el-color-picker>
+                                    <button
+                                        v-if="colorDraft[group.part]"
+                                        class="color-clear"
+                                        title="回到默认"
+                                        @click="changeColor(group.part, '')"
+                                    >×</button>
+                                </div>
+                                <span class="color-hint">{{ group.hint }}</span>
+                            </div>
+                        </div>
+                        <div class="color-preview" aria-label="配色预览">
+                            <p class="preview-title">
+                                <span>看着是这样</span>
+                                <em class="preview-count" v-if="touchedCount > 0">改过 {{ touchedCount }} 处</em>
+                            </p>
+                            <div class="preview-window" :style="previewStyle">
+                                <div class="preview-side">
+                                    <span class="preview-dot on"></span>
+                                    <span class="preview-dot"></span>
+                                    <span class="preview-dot"></span>
+                                    <span class="preview-dot"></span>
+                                </div>
+                                <div class="preview-body">
+                                    <span class="preview-bar"></span>
+                                    <span class="preview-line wide"></span>
+                                    <span class="preview-line"></span>
+                                    <span class="preview-line short"></span>
+                                    <div class="preview-foot">
+                                        <span class="preview-chip">选中</span>
+                                        <span class="preview-note">便签</span>
+                                        <span class="preview-warn">删除</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="color-presets">
+                        <span class="presets-label">成套的配色</span>
+                        <div class="presets-list">
+                            <button
+                                v-for="preset in colorPresets"
+                                :key="preset.name"
+                                class="preset-btn"
+                                :title="preset.name"
+                                :disabled="saving"
+                                @click="usePreset(preset)"
+                            >
+                                <i
+                                    v-for="(swatch, i) in presetSwatches(preset)"
+                                    :key="i"
+                                    class="preset-swatch"
+                                    :style="{ background: swatch }"
+                                ></i>
+                                <span class="preset-name">{{ preset.name }}</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="css-actions">
+                        <span class="css-status">{{ cssStatus }}</span>
+                        <button class="tool-btn" :disabled="saving" @click="saveColors">存下这个配色</button>
+                        <button class="tool-btn" :disabled="saving" @click="resetColors">全还原</button>
+                    </div>
+                </div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <p class="setting-name">关掉窗口时</p>
+                    <p class="setting-desc">关掉窗口后它还待在右下角图标里，随时能叫回来；关掉这个就彻底退出</p>
                 </div>
                 <div class="setting-options">
                     <el-switch
                         v-model="closeToTray"
                         :loading="traySaving"
                         inline-prompt
-                        active-text="托盘"
+                        active-text="待着"
                         inactive-text="退出"
                         @change="changeCloseToTray"
                     ></el-switch>
@@ -46,8 +172,8 @@
             </div>
             <div class="setting-item">
                 <div class="setting-info">
-                    <p class="setting-name">全局快捷键</p>
-                    <p class="setting-desc">窗口隐藏到托盘时也能用。点击右侧按键框后直接按下组合键，Esc 取消；需包含 Ctrl / Alt / Shift / Win 之一</p>
+                    <p class="setting-name">快捷键</p>
+                    <p class="setting-desc">窗口藏起来也能用。点一下按键框，直接按你想要的组合键，Esc 反悔</p>
                 </div>
                 <div class="setting-options shortcut-options">
                     <div class="shortcut-row" v-for="row in shortcutRows" :key="row.key">
@@ -61,16 +187,16 @@
                             {{ capturing === row.key ? '请按键…' : displayAccelerator(row.key) }}
                         </button>
                     </div>
-                    <button class="folder-btn" :disabled="shortcutSaving" @click="resetShortcuts">恢复默认</button>
+                    <button class="folder-btn" :disabled="shortcutSaving" @click="resetShortcuts">换回默认</button>
                 </div>
             </div>
             <div class="setting-item setting-item-block">
                 <div class="setting-info">
-                    <p class="setting-name">标签管理</p>
-                    <p class="setting-desc">重命名会同步所有笔记；若新名称已存在会自动合并两个标签。删除标签不会删除笔记内容</p>
+                    <p class="setting-name">整理标签</p>
+                    <p class="setting-desc">改名字会一起改掉所有笔记上的标签；删标签只是在摘标签，笔记还在</p>
                 </div>
                 <div class="setting-options tag-manager">
-                    <p v-if="tags.length === 0" class="tag-empty">还没有任何标签，先在笔记里添加一个</p>
+                    <p v-if="tags.length === 0" class="tag-empty">还没有标签，编辑笔记时就能加</p>
                     <div class="tag-row" v-for="tag in sortedTags" :key="tag">
                         <span class="tag-name" :class="{ pinned: isPinned(tag) }">{{ tag }}</span>
                         <span class="tag-swatches">
@@ -88,7 +214,7 @@
                             <button class="folder-btn" @click="togglePin(tag)">
                                 {{ isPinned(tag) ? "取消置顶" : "置顶" }}
                             </button>
-                            <button class="folder-btn" @click="startRenameTag(tag)">重命名</button>
+                            <button class="folder-btn" @click="startRenameTag(tag)">改名</button>
                             <button class="folder-btn tag-btn-danger" @click="confirmRemoveTag(tag)">删除</button>
                         </span>
                     </div>
@@ -96,39 +222,39 @@
             </div>
             <div class="setting-item">
                 <div class="setting-info">
-                    <p class="setting-name">数据备份</p>
-                    <p class="setting-desc">把配置、笔记和便签整体复制到一个带时间戳的文件夹，方便随时回滚</p>
+                    <p class="setting-name">备份</p>
+                    <p class="setting-desc">一键把笔记和设置存一份，出问题随时能拿回来</p>
                 </div>
                 <div class="setting-options setting-options-wrap">
                     <button class="folder-btn" :disabled="backingUp" @click="backupData">
                         {{ backingUp ? '备份中…' : '备份全部数据' }}
                     </button>
-                    <button class="folder-btn" :disabled="backingUp" @click="importNotes('files')">导入笔记文件</button>
+                    <button class="folder-btn" :disabled="backingUp" @click="importNotes('files')">导入文件</button>
                     <button class="folder-btn" :disabled="backingUp" @click="importNotes('folder')">导入文件夹</button>
                 </div>
             </div>
             <div class="setting-item">
                 <div class="setting-info">
-                    <p class="setting-name">数据文件夹</p>
-                    <p class="setting-desc">直接打开数据目录，便签为纯文本文件，可自行备份或用外部编辑器修改</p>
+                    <p class="setting-name">存放在哪</p>
+                    <p class="setting-desc">想用别的软件改也行，直接打开文件夹就能看到</p>
                 </div>
                 <div class="setting-options">
-                    <button class="folder-btn" :disabled="opening" @click="openFolder('notes')">打开笔记文件夹</button>
-                    <button class="folder-btn" :disabled="opening" @click="openFolder('labels')">打开便签文件夹</button>
+                    <button class="folder-btn" :disabled="opening" @click="openFolder('notes')">看笔记</button>
+                    <button class="folder-btn" :disabled="opening" @click="openFolder('labels')">看便签</button>
                 </div>
             </div>
         </div>
         <el-dialog
             v-model="tagDialogVisible"
-            title="重命名标签"
+title="改个名字"
             width="min(420px, 90vw)"
             @closed="resetTagDialog"
         >
-            <span>把「{{ tagDialogFrom }}」改成新的名称</span>
+            <span>「{{ tagDialogFrom }}」换个名字</span>
             <br><br>
             <el-input
                 v-model="tagDialogValue"
-                placeholder="请输入新的标签名"
+                placeholder="新名字"
                 :maxlength="24"
                 @input="tagDialogError = ''"
                 @keyup.enter="submitRenameTag"
@@ -145,7 +271,8 @@
 </template>
 
 <script>
-import { ElButton, ElDialog, ElInput, ElMessage, ElMessageBox, ElSwitch } from 'element-plus'
+import { ElButton, ElColorPicker, ElDialog, ElInput, ElMessage, ElMessageBox, ElSwitch } from 'element-plus'
+import { applyAccent, applyCustomColors, normalizeCustomColors } from '../utils/theme.js'
 import { applyTheme, currentTheme, watchTheme } from '../utils/theme.js'
 
 const COLOR_POOL = ['#e5484d','#f76808','#ffb224','#46a758','#12a594','#0090ff','#8e4ec6','#e93d82']
@@ -217,12 +344,86 @@ const errorText = error => {
     const index = message.lastIndexOf('Error: ')
     return index >= 0 ? message.slice(index + 7) : message
 }
+function remapColors(colors, from, to) {
+    const list = {}
+    let changed = false
+    const key = String(from).toLowerCase()
+    Object.keys(colors || {}).forEach(name=>{
+        if(name.toLowerCase() !== key){
+            list[name] = colors[name]
+            return
+        }
+        changed = true
+        const color = colors[name]
+        if(color && !list[to]) list[to] = color
+    })
+    return { list, changed }
+}
+function remapPinned(pinned, from, to) {
+    const list = []
+    let changed = false
+    const key = String(from).toLowerCase()
+    ;(pinned || []).forEach(item=>{
+        if(String(item).toLowerCase() !== key){
+            list.push(item)
+            return
+        }
+        changed = true
+        if(!list.some(one=>String(one).toLowerCase() === String(to).toLowerCase())) list.push(to)
+    })
+    return { list, changed }
+}
+// 每个部位一行，标签和说明都放在这里，界面上直接照着渲染。
+const COLOR_GROUPS = [
+    { part:'page',     label:'页面底色', hint:'笔记区、列表这些大面积的背景' },
+    { part:'panel',    label:'面板底色', hint:'标题栏、侧边栏这类成块的区域' },
+    { part:'card',     label:'卡片底色', hint:'按钮底、历史面板这类小块' },
+    { part:'text',     label:'正文文字', hint:'正文和标题的字色' },
+    { part:'textSoft', label:'次要文字', hint:'说明、时间和数量的字色' },
+    { part:'line',     label:'分隔线',   hint:'边框和分割线' },
+    { part:'accent',   label:'主题色',   hint:'选中态和高亮，上面的主题色也可以改' },
+    { part:'danger',   label:'危险提示', hint:'删除、报错这些红字' },
+    { part:'sticky',   label:'便签颜色', hint:'便签纸和它的边' }
+]
+// 成套配色，一键把九个部位都填上，省得一个个挑。
+// 「原样」没有颜色值，预览小球就取自带的默认色，免得那一颗是空的。
+const DEFAULT_PREVIEW = { page:'#161618', panel:'#1a1b1f', card:'#26272d', text:'#f2f3f5', accent:'#e8d531' }
+const PRESET_PREVIEW = ['page', 'panel', 'card', 'text', 'accent']
+function presetSwatches(preset) {
+    const source = preset && preset.colors && Object.keys(preset.colors).length > 0 ? preset.colors : DEFAULT_PREVIEW
+    return PRESET_PREVIEW.map(part => source[part] || DEFAULT_PREVIEW[part])
+}
+const COLOR_PRESETS = [
+    { name:'原样', colors:{} },
+    { name:'海盐', colors:{ page:'#eef4f7', panel:'#ffffff', card:'#dde8ee', text:'#173240', textSoft:'#5b7482', line:'#c3d5de', accent:'#0e7490', danger:'#b91c1c', sticky:'#0e7490' } },
+    { name:'米纸', colors:{ page:'#f6f1e7', panel:'#fdfaf3', card:'#ece2d0', text:'#3a3226', textSoft:'#7d7161', line:'#ddd0b8', accent:'#a16207', danger:'#a3311c', sticky:'#a16207' } },
+    { name:'夜灯', colors:{ page:'#14161c', panel:'#1b1e26', card:'#262b35', text:'#e8ebf2', textSoft:'#949cad', line:'#343a47', accent:'#f0a93b', danger:'#f2545b', sticky:'#f0a93b' } },
+    { name:'苔绿', colors:{ page:'#12160f', panel:'#1a1f16', card:'#242b1e', text:'#e6eddc', textSoft:'#9aa88c', line:'#323a2a', accent:'#84cc16', danger:'#e05252', sticky:'#84cc16' } },
+    { name:'樱粉', colors:{ page:'#fdf2f4', panel:'#ffffff', card:'#f8e0e6', text:'#3d2129', textSoft:'#8a6570', line:'#eecdd6', accent:'#db2777', danger:'#be123c', sticky:'#db2777' } }
+]
+function stripColor(colors, tag) {
+    const list = {}
+    const key = String(tag).toLowerCase()
+    Object.keys(colors || {}).forEach(name=>{
+        if(name.toLowerCase() !== key) list[name] = colors[name]
+    })
+    return list
+}
 
 export default {
-    components:{ ElSwitch, ElDialog, ElInput, ElButton },
+    components:{ ElSwitch, ElDialog, ElInput, ElButton, ElColorPicker },
     data() {
         return {
             theme: currentTheme(),
+            accent: '',
+            accentDraft: '',
+            accentPalette: ['#e5484d','#f76808','#e8d531','#46a758','#12a594','#0090ff','#8e4ec6','#e93d82'],
+            colorDraft: {},
+            savedColors: {},
+            colorGroups: COLOR_GROUPS,
+            colorPresets: COLOR_PRESETS,
+            cssStatus: '',
+            cssTimer: null,
             saving: false,
             closeToTray: true,
             traySaving: false,
@@ -260,9 +461,32 @@ export default {
                 if(pa !== pb) return pa - pb
                 return a.localeCompare(b)
             })
+        },
+        // 预览跟着当前选中的颜色实时变，没选的那几项就显示原来的样子。
+        previewStyle() {
+            const colors = normalizeCustomColors(this.colorDraft)
+            const style = {}
+            const set = (name, value) => { if(value) style[name] = value }
+            const accent = colors.accent || this.accent
+            set('--preview-page', colors.page)
+            set('--preview-panel', colors.panel)
+            set('--preview-card', colors.card)
+            set('--preview-text', colors.text)
+            set('--preview-text-soft', colors.textSoft)
+            set('--preview-line', colors.line)
+            set('--preview-accent', accent)
+            set('--preview-danger', colors.danger)
+            set('--preview-sticky', colors.sticky)
+            return style
+        },
+        // 有几处和默认不一样，预览上标出来，用户才知道改了什么。
+        touchedCount() {
+            const colors = normalizeCustomColors(this.colorDraft)
+            return Object.keys(colors).length
         }
     },
     methods: {
+        presetSwatches,
         displayAccelerator(key) {
             return toDisplay(this.shortcuts[key])
         },
@@ -291,10 +515,10 @@ export default {
             this.shortcutSaving = true
             try {
                 await window.electron.setSetting('shortcuts', next)
-                ElMessage.success('快捷键已保存，立即生效')
+                ElMessage.success('改好啦，立刻生效')
             } catch (error) {
                 this.shortcuts = previous
-                ElMessage.error(errorText(error) || '快捷键保存失败')
+                ElMessage.error(errorText(error) || '没保存成，再试一次')
             } finally {
                 this.shortcutSaving = false
             }
@@ -314,7 +538,90 @@ export default {
             } catch {
                 this.theme = previous
                 applyTheme(previous)
-                ElMessage.error('主题保存失败')
+                ElMessage.error('没保存成，再试一次')
+            } finally {
+                this.saving = false
+            }
+        },
+        async changeAccent(value) {
+            const hex = typeof value === "string" ? value.trim().toLowerCase() : ""
+            if(this.saving || this.accent === hex) return
+            const previous = this.accent
+            this.accent = hex
+            applyAccent(hex)
+            this.saving = true
+            try {
+                await window.electron.setSetting('accentColor', hex)
+            } catch {
+                this.accent = previous
+                applyAccent(previous)
+                ElMessage.error('没保存成，再试一次')
+            } finally {
+                this.saving = false
+            }
+        },
+        // 换颜色先立刻上看效果，存下去才在下次打开时还在。
+        changeColor(part, value) {
+            const hex = typeof value === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value.trim())
+                ? value.trim().toLowerCase()
+                : ""
+            const next = Object.assign({}, this.colorDraft)
+            if(hex === "") delete next[part]
+            else next[part] = hex
+            this.colorDraft = next
+            this.previewColors()
+        },
+        usePreset(preset) {
+            if(!preset || this.saving) return
+            this.colorDraft = Object.assign({}, preset.colors)
+            this.previewColors()
+        },
+        pickColor(part) {
+            // 点一下色块就把选择器弹到它旁边，省得再去找输入框
+            this.$nextTick(()=>{
+                const picker = this.$el.querySelector('.color-grid [data-pick="' + part + '"] .el-color-picker__trigger')
+                if(picker && picker.click) picker.click()
+            })
+        },
+        previewColors() {
+            if(this.cssTimer) clearTimeout(this.cssTimer)
+            const colors = normalizeCustomColors(this.colorDraft)
+            applyCustomColors(colors)
+            if(colors.accent) applyAccent(colors.accent)
+            this.cssTimer = setTimeout(()=>{ this.cssTimer = null },260)
+        },
+        async saveColors() {
+            if(this.saving) return
+            const colors = normalizeCustomColors(this.colorDraft)
+            this.saving = true
+            try {
+                await window.electron.setSetting('customColors', colors)
+                this.savedColors = colors
+                this.cssStatus = '配色存好了'
+                setTimeout(()=>{ this.cssStatus = '' },2200)
+            } catch {
+                this.cssStatus = '没存上，再试一次'
+            } finally {
+                this.saving = false
+            }
+        },
+        async resetColors() {
+            if(this.saving) return
+            const previous = this.savedColors
+            this.saving = true
+            try {
+                await window.electron.setSetting('customColors', {})
+                this.colorDraft = {}
+                this.savedColors = {}
+                applyCustomColors({})
+                applyAccent(this.accent)
+                this.cssStatus = '回到原来的样子了'
+                setTimeout(()=>{ this.cssStatus = '' },2200)
+            } catch {
+                this.colorDraft = previous
+                applyCustomColors(previous)
+                if(previous.accent) applyAccent(previous.accent)
+                this.cssStatus = '没还原成功'
             } finally {
                 this.saving = false
             }
@@ -327,7 +634,7 @@ export default {
                 await window.electron.setSetting('closeToTray', value)
             } catch {
                 this.closeToTray = previous
-                ElMessage.error('设置保存失败')
+                ElMessage.error('没保存成，再试一次')
             } finally {
                 this.traySaving = false
             }
@@ -337,9 +644,9 @@ export default {
             this.opening = true
             try {
                 const error = await window.electron.openDataFolder(key)
-                if(error) ElMessage.error('打开失败：' + error)
+                if(error) ElMessage.error('打不开：' + error)
             } catch {
-                ElMessage.error('打开失败')
+                ElMessage.error('打不开')
             } finally {
                 this.opening = false
             }
@@ -384,7 +691,7 @@ export default {
                 await window.electron.setSetting('tagColors', next)
             } catch {
                 this.tagColors = previous
-                ElMessage.error('标签颜色保存失败')
+                ElMessage.error('颜色没保存成')
             }
         },
         async setTagColor(tag, color) {
@@ -416,7 +723,7 @@ export default {
                 await window.electron.setSetting('pinnedTags', next)
             } catch {
                 this.pinnedTags = previous
-                ElMessage.error('置顶保存失败')
+                ElMessage.error('没保存成')
             } finally {
                 this.tagSaving = false
             }
@@ -437,7 +744,7 @@ export default {
             const from = this.tagDialogFrom
             const to = typeof this.tagDialogValue === "string" ? this.tagDialogValue.trim() : ""
             if(!to){
-                this.tagDialogError = '标签名不能为空'
+                this.tagDialogError = '名字不能空着'
                 return
             }
             if(to === from) return
@@ -448,50 +755,32 @@ export default {
                 this.resetTagDialog()
                 await this.migrateTagMeta(from, to)
                 await this.loadTags()
-                ElMessage.success('标签已重命名')
+                ElMessage.success('标签已改名')
             } catch (error) {
-                this.tagDialogError = errorText(error) || '重命名失败，请重试'
+                this.tagDialogError = errorText(error) || '没改成功，再试一次'
             } finally {
                 this.tagSaving = false
             }
         },
         async migrateTagMeta(from, to) {
-            const colors = Object.assign({}, this.tagColors)
-            const pinned = [...this.pinnedTags]
-            let changed = false
-            const key = String(from).toLowerCase()
-            Object.keys(colors).forEach(name=>{
-                if(name.toLowerCase() !== key) return
-                const color = colors[name]
-                delete colors[name]
-                if(color && !colors[to]) colors[to] = color
-                changed = true
-            })
-            const nextPinned = []
-            pinned.forEach(item=>{
-                if(String(item).toLowerCase() === key){
-                    changed = true
-                    if(!nextPinned.some(one=>one.toLowerCase() === to.toLowerCase())) nextPinned.push(to)
-                    return
-                }
-                nextPinned.push(item)
-            })
-            if(!changed) return
+            const colors = remapColors(this.tagColors, from, to)
+            const pinnedMapped = remapPinned(this.pinnedTags, from, to)
+            if(!colors.changed && !pinnedMapped.changed) return
             try {
-                await window.electron.setSetting('tagColors', colors)
-                this.tagColors = colors
+                await window.electron.setSetting('tagColors', colors.list)
+                this.tagColors = colors.list
             }catch{}
             try {
-                await window.electron.setSetting('pinnedTags', nextPinned)
-                this.pinnedTags = nextPinned
+                await window.electron.setSetting('pinnedTags', pinnedMapped.list)
+                this.pinnedTags = pinnedMapped.list
             }catch{}
         },
         async confirmRemoveTag(tag) {
             if(this.tagSaving) return
             try {
                 await ElMessageBox.confirm(
-                    `确定删除标签「${tag}」吗？所有笔记会保留，只是移除这个标签。`,
-                    '删除标签',
+                    `把「${tag}」从所有笔记上摘下来？笔记本身不会动。`,
+                    '摘掉标签',
                     {
                         type: 'warning',
                         confirmButtonText: '删除',
@@ -502,22 +791,21 @@ export default {
             } catch {
                 return
             }
+            await this.doRemoveTag(tag)
+        },
+        async doRemoveTag(tag) {
             this.tagSaving = true
             try {
                 await window.electron.removeTag(tag)
-                const colors = Object.assign({}, this.tagColors)
-                Object.keys(colors).forEach(name=>{
-                    if(name.toLowerCase() === tag.toLowerCase()) delete colors[name]
-                })
-                await this.saveTagColors(colors)
+                await this.saveTagColors(stripColor(this.tagColors, tag))
                 this.pinnedTags = this.pinnedTags.filter(item=>String(item).toLowerCase() !== tag.toLowerCase())
                 try {
                     await window.electron.setSetting('pinnedTags', this.pinnedTags)
                 }catch{}
                 await this.loadTags()
-                ElMessage.success('标签已删除')
+                ElMessage.success('标签已删掉')
             } catch (error) {
-                ElMessage.error(errorText(error) || '标签删除失败')
+                ElMessage.error(errorText(error) || '没删掉，再试一次')
             } finally {
                 this.tagSaving = false
             }
@@ -530,12 +818,12 @@ export default {
                 if(result && result.canceled) return
                 const created = result && Array.isArray(result.created) ? result.created.length : 0
                 const failed = result && Array.isArray(result.failed) ? result.failed.length : 0
-                if(created > 0) ElMessage.success('成功导入 ' + created + ' 篇笔记')
-                if(failed > 0) ElMessage.warning(failed + ' 个文件无法导入')
-                if(created === 0 && failed === 0) ElMessage.info('没有可导入的内容')
+                if(created > 0) ElMessage.success('已导入 ' + created + ' 篇笔记')
+                if(failed > 0) ElMessage.warning(failed + ' 个文件没能导入')
+                if(created === 0 && failed === 0) ElMessage.info('没找到可以导入的内容')
                 if(created > 0) await this.loadTags()
             } catch (error) {
-                ElMessage.error(errorText(error) || '导入失败')
+                ElMessage.error(errorText(error) || '没导进去，再试一次')
             } finally {
                 this.backingUp = false
             }
@@ -547,9 +835,9 @@ export default {
                 const result = await window.electron.backupData()
                 if(result && result.canceled) return
                 const items = result && Array.isArray(result.items) ? result.items : []
-                ElMessage.success('已备份 ' + items.length + ' 项到 ' + result.dir)
+                ElMessage.success('备份好了，存在 ' + result.dir)
             } catch (error) {
-                ElMessage.error(errorText(error) || '备份失败')
+                ElMessage.error(errorText(error) || '没备份成，再试一次')
             } finally {
                 this.backingUp = false
             }
@@ -576,13 +864,40 @@ export default {
             .catch(()=>{
                 this.closeToTray = true
             })
+        window.electron.getSetting('accentColor')
+            .then(value=>{
+                const hex = typeof value === 'string' ? value : ''
+                this.accent = hex
+                this.accentDraft = hex || '#e8d531'
+            })
+            .catch(()=>{
+                this.accent = ''
+                this.accentDraft = '#e8d531'
+            })
+        window.electron.getSetting('customColors')
+            .then(value=>{
+                const colors = normalizeCustomColors(value)
+                this.colorDraft = colors
+                this.savedColors = colors
+            })
+            .catch(()=>{
+                this.colorDraft = {}
+                this.savedColors = {}
+            })
     },
     beforeUnmount() {
         document.removeEventListener('keydown',this.onCaptureKeydown,true)
+        if(this.cssTimer) clearTimeout(this.cssTimer)
         if(this.offTheme) this.offTheme()
     },
     activated() {
+        document.addEventListener('keydown',this.onCaptureKeydown,true)
         this.loadTags()
+    },
+    deactivated() {
+        // 设置页是缓存起来的，离开后必须停手：正处在「请按键…」时点走，会把整页按键都吞掉
+        this.capturing = null
+        document.removeEventListener('keydown',this.onCaptureKeydown,true)
     }
 }
 </script>
@@ -636,11 +951,6 @@ export default {
     display: flex;
     flex-shrink: 0;
     gap: 12px;
-}
-.setting-item-block{
-    flex-direction: column;
-    align-items: stretch;
-    gap: 16px;
 }
 .setting-item-block .setting-info{
     min-width: 0;
@@ -923,6 +1233,325 @@ export default {
         flex-direction: column;
         align-items: stretch;
     }
+}
+.accent-options{
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: var(--block-1);
+    border: 1px solid var(--border-1);
+}
+.accent-options :deep(.el-color-picker__trigger){
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--border-2) inset;
+}
+.accent-options :deep(.el-color-picker__predefine-color){
+    border-radius: 50%;
+}
+.accent-swatch{
+    /* 不写 flex-shrink 的话，颜色一多就会被挤扁成椭圆 */
+    box-sizing: border-box;
+    flex: 0 0 20px;
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px var(--border-2) inset;
+    transition: transform 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.accent-swatch:hover:not(:disabled){
+    transform: scale(1.12);
+}
+.accent-swatch.active{
+    box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--accent);
+}
+.accent-swatch.default{
+    background: conic-gradient(#e5484d,#f76808,#e8d531,#46a758,#0090ff,#8e4ec6,#e5484d);
+}
+.setting-item-block{
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+}
+.color-board{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.color-main{
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+}
+.color-grid{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 18px;
+    flex: 1;
+    min-width: 0;
+}
+.color-row{
+    display: grid;
+    grid-template-columns: 64px auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    gap: 3px 8px;
+}
+.color-label{
+    font-size: 12px;
+    color: var(--text-1);
+    white-space: nowrap;
+}
+.color-hint{
+    grid-column: 1 / -1;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--text-2);
+}
+.color-control{
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.color-chip{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 22px;
+    flex-shrink: 0;
+    padding: 0;
+    border: 1px solid var(--border-2);
+    border-radius: 6px;
+    cursor: pointer;
+    background: var(--block-1);
+    transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+.color-chip:hover{
+    border-color: var(--accent-border);
+}
+.color-chip.on{
+    border-color: var(--accent-border);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.chip-empty{
+    font-size: 9px;
+    color: var(--text-2);
+}
+.color-clear{
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--text-2);
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.color-clear:hover{
+    color: var(--danger);
+    background: var(--danger-soft);
+}
+.color-preview{
+    flex-shrink: 0;
+    width: 236px;
+}
+.preview-title{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--text-2);
+}
+.preview-count{
+    font-size: 10px;
+    font-style: normal;
+    color: var(--accent-strong);
+}
+.preview-window{
+    display: flex;
+    gap: 6px;
+    padding: 8px;
+    border-radius: var(--radius-2);
+    background: var(--preview-page, var(--bg-1));
+    border: 1px solid var(--preview-line, var(--border-1));
+}
+.preview-side{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 34px;
+    flex-shrink: 0;
+    padding: 5px;
+    box-sizing: border-box;
+    border-radius: 5px;
+    background: var(--preview-panel, var(--surface-1));
+    border: 1px solid var(--preview-line, var(--border-1));
+}
+.preview-dot{
+    width: 100%;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--preview-text-soft, var(--text-2));
+    opacity: 0.5;
+}
+.preview-dot.on{
+    background: var(--preview-accent, var(--accent-strong));
+    opacity: 1;
+}
+.preview-body{
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex: 1;
+    min-width: 0;
+    padding: 9px;
+    border-radius: 5px;
+    background: var(--preview-panel, var(--surface-1));
+}
+.preview-bar{
+    width: 58%;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--preview-text, var(--text-1));
+}
+.preview-line{
+    width: 100%;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--preview-text-soft, var(--text-2));
+}
+.preview-line.wide{
+    width: 88%;
+}
+.preview-line.short{
+    width: 62%;
+}
+.preview-foot{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 3px;
+}
+.preview-chip,
+.preview-note,
+.preview-warn{
+    padding: 2px 6px;
+    font-size: 9px;
+    border-radius: 4px;
+}
+.preview-chip{
+    color: var(--on-accent);
+    background: var(--preview-accent, var(--accent-strong));
+}
+.preview-note{
+    color: var(--preview-sticky, var(--sticky-strong));
+    background: var(--sticky-soft);
+    border: 1px solid var(--preview-sticky, var(--sticky-strong));
+}
+.preview-warn{
+    color: var(--preview-danger, var(--danger));
+    background: var(--danger-soft);
+}
+.color-presets{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-1);
+}
+.presets-label{
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-2);
+}
+.presets-list{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.preset-btn{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 9px;
+    font-size: 11px;
+    color: var(--text-2);
+    background: var(--block-1);
+    border: 1px solid var(--border-1);
+    border-radius: 13px;
+    cursor: pointer;
+    transition: color 0.14s var(--ease), border-color 0.14s var(--ease);
+}
+.preset-btn:hover:not(:disabled){
+    color: var(--text-1);
+    border-color: var(--accent-border);
+}
+.preset-btn:disabled{
+    opacity: 0.5;
+    cursor: default;
+}
+.preset-swatch{
+    width: 9px;
+    height: 9px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px var(--border-2) inset;
+}
+.preset-name{
+    white-space: nowrap;
+}
+/* 这块的操作按钮比别处更轻，靠位置和分组来区分 */
+.tool-btn{
+    height: 28px;
+    padding: 0 14px;
+    font-size: 12px;
+    color: var(--text-2);
+    background: var(--block-1);
+    border: 1px solid var(--border-1);
+    border-radius: var(--radius-1);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.14s var(--ease), border-color 0.14s var(--ease), background 0.14s var(--ease);
+}
+.tool-btn:hover:not(:disabled){
+    color: var(--text-1);
+    border-color: var(--accent-border);
+}
+.tool-btn:disabled{
+    opacity: 0.5;
+    cursor: default;
+}
+.theme-option-text{
+    font-size: 12px;
+    color: inherit;
+}
+.css-actions{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.css-status{
+    flex: 1;
+    font-size: 11px;
+    color: var(--text-2);
+}
+@media (max-width: 620px){
     .theme-option{
         flex: 1;
     }

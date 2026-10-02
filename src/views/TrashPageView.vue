@@ -1,9 +1,9 @@
-<template>
+﻿<template>
     <div id="trash-page">
         <div class="trash-head">
             <div class="trash-title">
                 <h2>回收站</h2>
-                <p class="trash-desc">删除的内容会先放到这里，还原后回到原来的位置</p>
+                <p class="trash-desc">删掉的东西都在这儿，想好了再还原</p>
             </div>
             <div class="trash-tools">
                 <button class="trash-btn" :disabled="loading" @click="getTrash">
@@ -17,7 +17,7 @@
         <div v-if="loading" class="trash-hint">加载中…</div>
         <div v-else-if="total === 0" class="trash-empty">
             <p class="trash-empty-title">回收站是空的</p>
-            <p class="trash-empty-desc">在笔记或便签上点「⋯」删除后，内容会出现在这里</p>
+            <p class="trash-empty-desc">在笔记上点「⋯」删掉，就会跑到这儿来</p>
         </div>
         <template v-else>
             <div v-for="group in groups" :key="group.label">
@@ -60,6 +60,7 @@ export default {
             sticky: [],
             loading: false,
             busy: false,
+            hidden: false,
             unsubscribe: null,
             requestId: 0
         }
@@ -104,7 +105,7 @@ export default {
                 if (request === this.requestId) {
                     this.notes = []
                     this.sticky = []
-                    ElMessage.error("回收站读取失败")
+                    ElMessage.error("没打开成，稍后再试")
                 }
             } finally {
                 if (request === this.requestId) this.loading = false
@@ -118,7 +119,7 @@ export default {
                 await this.getTrash()
                 ElMessage.success("已还原")
             } catch {
-                ElMessage.error("还原失败，请重试")
+                ElMessage.error("没还原成，稍后再试")
             } finally {
                 this.busy = false
             }
@@ -127,7 +128,7 @@ export default {
             if (this.busy) return
             try {
                 await ElMessageBox.confirm(
-                    `确定彻底删除“${item.title}”吗？该操作不可恢复。`,
+                    `删掉「${item.title}」就找不回来了，确定吗？`,
                     "彻底删除",
                     {
                         type: "warning",
@@ -143,9 +144,9 @@ export default {
             try {
                 await window.electron.purgeTrash(item.kind, item.time)
                 await this.getTrash()
-                ElMessage.success("已彻底删除")
+                ElMessage.success("彻底删掉了")
             } catch {
-                ElMessage.error("删除失败，请重试")
+                ElMessage.error("没删掉，稍后再试")
             } finally {
                 this.busy = false
             }
@@ -154,7 +155,7 @@ export default {
             if (this.busy || this.total === 0) return
             try {
                 await ElMessageBox.confirm(
-                    `确定清空回收站吗？其中的 ${this.total} 项内容将被彻底删除，无法恢复。`,
+                    `清空后，这 ${this.total} 项内容就找不回来了。确定吗？`,
                     "清空回收站",
                     {
                         type: "warning",
@@ -181,12 +182,17 @@ export default {
     },
     mounted() {
         this.unsubscribe = window.electron.onNoteUpdated(note => {
+            if(this.hidden) return   // 切走后不再后台请求
             if (note && (note.list || note.sticky)) this.getTrash()
         })
         this.getTrash()
     },
     activated() {
+        this.hidden = false
         this.getTrash()
+    },
+    deactivated() {
+        this.hidden = true
     },
     beforeUnmount() {
         if (this.unsubscribe) this.unsubscribe()

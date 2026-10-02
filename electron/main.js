@@ -1,15 +1,34 @@
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, globalShortcut } = require('electron')
+const { app, BrowserWindow, Tray, dialog, ipcMain, globalShortcut } = require('electron')
 const path = require('path')
 const fs = require('fs')
-const { conf_init, getConfig, isValidAccelerator, describeAccelerator, DEFAULT_SHORTCUTS } = require("./configInit")
+const { pathToFileURL } = require('url')
+const { conf_init, getConfig, isValidAccelerator, DEFAULT_SHORTCUTS } = require("./configInit")
 const { bindIpc, setSettingValidator } = require("./ipcHandler")
-const { note_init } = require("./noteFile")
-const { label_init } = require("./labelFile")
+const { note_init, getNoteContentPath, createNote, watchNotes, getNotes } = require("./noteFile")
+const { label_init, watchSticky } = require("./labelFile")
 const { graph_init } = require("./graphFile")
-const { registerStickyIpc } = require("./stickyWindow")
+const { registerStickyIpc, openStickyWindow } = require("./stickyWindow")
+const trayExtra = require("./trayExtra")
+const { getStickies, createSticky, saveSticky } = require("./labelFile")
+const { registerImageScheme, setupImageProtocol } = require("./imgProtocol")
 
 let mainWindow = null
 let tray = null
+
+// 索引文件是整份读改写，两个实例各写各的会互相覆盖，直接把后开的叫回前一个
+const hasLock = app.requestSingleInstanceLock()
+if(!hasLock){
+    app.quit()
+}
+// 启动没完成前（索引还没读）不能建窗，攒到起来后再叫出来
+let bootDone = false
+let pendingSecond = false
+app.on('second-instance',()=>{
+    if(bootDone) showMainWindow()
+    else pendingSecond = true
+})
+
+registerImageScheme()          // 必须在 app ready 之前声明，否则 <img> 不会按标准协议解析
 
 const createWindow = () => {
     const win = new BrowserWindow({
@@ -31,10 +50,23 @@ const createWindow = () => {
     }else{
         win.loadURL('http://localhost:5173')
     }
+    // 阻止任何 window.open / target=_blank 弹出空白窗口，链接跳转统一走应用内标签页
+    win.webContents.setWindowOpenHandler(()=>({ action:'deny' }))
+    // 跳转目标只认本页面，防止页面里的链接把窗口带去外站或本地任意文件
+    const entryFile = pathToFileURL(path.join(__dirname,'../dist/index.html')).toString()
+    win.webContents.on('will-navigate',(event,url)=>{
+        const target = String(url == null ? "" : url)
+        const isAppPage = target.startsWith('http://localhost:5173')
+            || target === entryFile
+            || target.startsWith(entryFile + "#")
+        if(!isAppPage) event.preventDefault()
+    })
     win.on('ready-to-show',()=>win.show())
     win.on('close',event=>{
         if(app.isQuitting) return
-        if(getConfig('closeToTray') !== false){
+        // 托盘没建起来时藏起来就没人能再叫出窗口了，直接退出
+        const canHide = tray != null && !tray.isDestroyed()
+        if(canHide && getConfig('closeToTray') !== false){
             event.preventDefault()
             win.hide()
             return
@@ -61,24 +93,42 @@ const createWindow = () => {
 const showMainWindow = () => {
     if(!mainWindow || mainWindow.isDestroyed()){
         createWindow()
-        return
+        return mainWindow
     }
     if(mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
     mainWindow.focus()
+    return mainWindow
 }
 
-const sendTrayAction = action => {
-    showMainWindow()
-    if(!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
-    setTimeout(()=>{
-        if(!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()){
-            mainWindow.webContents.send('tray-action',action)
+const sendTrayAction = (action,payload) => {
+    const win = showMainWindow()
+    if(!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+    const message = payload == null ? action : { action:action, tid:payload }
+    // 窗口可能还在加载，等页面就绪再投，避免消息被吞；发送前重查引用，防止这 200ms 里窗口被关
+    const deliver = ()=>{
+        const target = mainWindow
+        if(!target || target.isDestroyed() || target.webContents.isDestroyed()) return
+        if(target.webContents.isLoading()){
+            target.webContents.once('did-finish-load',()=>target.webContents.send('tray-action',message))
+            return
         }
-    },200)
+        target.webContents.send('tray-action',message)
+    }
+    setTimeout(deliver,200)
 }
 
 const currentShortcuts = () => {
+    // 注册成功的那套才是托盘菜单该显示的，配置文件里的值可能还没生效（注册失败会回滚）
+    const plan = activeShortcuts
+    if(plan){
+        const mapped = {}
+        plan.forEach(([name,accelerator])=>{ mapped[name] = accelerator })
+        return {
+            newNote: mapped.newNote || DEFAULT_SHORTCUTS.newNote,
+            newSticky: mapped.newSticky || DEFAULT_SHORTCUTS.newSticky
+        }
+    }
     const saved = getConfig('shortcuts')
     return {
         newNote: saved && saved.newNote ? saved.newNote : DEFAULT_SHORTCUTS.newNote,
@@ -86,27 +136,36 @@ const currentShortcuts = () => {
     }
 }
 
-const buildTrayMenu = () => {
-    const shortcuts = currentShortcuts()
-    return Menu.buildFromTemplate([
-    { label:'显示主窗口', click:showMainWindow },
-    { type:'separator' },
-    { label:'新建笔记\t' + describeAccelerator(shortcuts.newNote), click:()=>sendTrayAction('new-note') },
-    { label:'新建便签\t' + describeAccelerator(shortcuts.newSticky), click:()=>sendTrayAction('new-sticky') },
-    { type:'separator' },
-    {
-        label:'退出',
-        click:()=>{
-            app.isQuitting = true
-            app.quit()
-        }
+// 托盘依赖都从这里拿，方便单独换掉某一项而不动菜单本身。
+const trayDeps = () => {
+    return {
+        currentShortcuts:currentShortcuts,
+        showMainWindow:showMainWindow,
+        sendAction:sendTrayAction,
+        clipText:trayExtra.readClipText,
+        getNotes:getNotes,
+        getStickies:getStickies,
+        createSticky:createSticky,
+        saveSticky:saveSticky,
+        createNote:createNote,
+        openNote:tid=>sendTrayAction('open-note',tid),
+        openSticky:tid=>openStickyWindow(tid),
+        captureClip:kind=>captureClip(kind),
+        refresh:refreshTrayMenu
     }
-    ])
+}
+const buildTrayMenuFull = () => trayExtra.buildTrayMenu(trayDeps())
+
+// 剪贴板速记：先把剪贴板里的文字存成笔记或便签，再把窗口叫出来。
+const captureClip = kind => {
+    const result = trayExtra.captureFromClipboard(trayDeps(),kind)
+    if(result.ok) refreshTrayMenu()
+    return result
 }
 
 const refreshTrayMenu = () => {
     if(tray == null || tray.isDestroyed()) return
-    tray.setContextMenu(buildTrayMenu())
+    tray.setContextMenu(buildTrayMenuFull())
 }
 
 const SHORTCUT_ACTIONS = {
@@ -151,13 +210,21 @@ const applyShortcuts = shortcuts => {
 }
 
 const createTray = () => {
-    const image = nativeImage.createFromPath(path.join(__dirname,'tray.png'))
-    if(image.isEmpty()) return
-    tray = new Tray(image)
-    tray.setToolTip('desktop-notebook')
-    tray.setContextMenu(buildTrayMenu())
-    tray.on('click',()=>showMainWindow())
-    tray.on('double-click',()=>showMainWindow())
+    try{
+        const image = trayExtra.makeTrayIcon()
+        if(image == null || image.isEmpty()){
+            console.error('[tray] 图标生成失败，托盘不可用')
+            return
+        }
+        tray = new Tray(image)
+        tray.setToolTip('desktop-notebook')
+        tray.setContextMenu(buildTrayMenuFull())
+        tray.on('click',()=>showMainWindow())
+        tray.on('double-click',()=>showMainWindow())
+    }catch(error){
+        tray = null
+        console.error('[tray] 托盘创建失败：' + error.message)
+    }
 }
 
 const isWritableDir = dir => {
@@ -191,11 +258,24 @@ app.whenReady().then(async () => {
         note_init(dataDir)
         label_init(dataDir)
         graph_init(dataDir)
+        setupImageProtocol(tid=>path.dirname(getNoteContentPath(tid)))
         registerStickyIpc(ipcMain)
         setSettingValidator(setting=>{
             if(setting.key !== 'shortcuts') return null
             return applyShortcuts(setting.value)
         })
+        // 笔记或便签有变动时，托盘里的「最近」列表跟着更新一次（攒一下再刷，连着写时只刷最后一次）
+        let refreshTimer = null
+        const refreshIfChanged = ()=>{
+            if(refreshTimer) clearTimeout(refreshTimer)
+            refreshTimer = setTimeout(()=>{ refreshTimer = null; refreshTrayMenu() },120)
+        }
+        try{
+            watchNotes(()=>refreshIfChanged())
+            watchSticky(()=>refreshIfChanged())
+        }catch(error){
+            console.warn('[tray] 最近列表不会自动刷新：' + error.message)
+        }
         createWindow()
         createTray()
         try{
@@ -212,6 +292,11 @@ app.whenReady().then(async () => {
     app.on('activate', () => {
         if (mainWindow == null || mainWindow.isDestroyed()) createWindow()
     })
+    bootDone = true
+    if(pendingSecond){
+        pendingSecond = false
+        showMainWindow()
+    }
 })
 app.on('before-quit',()=>{
     app.isQuitting = true
